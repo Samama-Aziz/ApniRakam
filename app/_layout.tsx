@@ -12,16 +12,21 @@ export default function RootLayout() {
   const { colors, isDark } = useTheme();
 
   useEffect(() => {
-    if (Platform.OS !== 'web') {
-      import('@/database').then(({ initDatabase }) => {
-        initDatabase();
-      });
+    let mounted = true;
+    async function prepareApp() {
+      try {
+        if (Platform.OS !== 'web') {
+          const { initDatabase } = await import('@/database');
+          await initDatabase();
+        }
+      } catch (error) {
+        console.error('[Database] Initialization failed:', error);
+      } finally {
+        if (mounted) SplashScreen.hideAsync().catch(() => {});
+      }
     }
-
-    const timer = setTimeout(() => {
-      SplashScreen.hideAsync().catch(() => {});
-    }, 500);
-    return () => clearTimeout(timer);
+    void prepareApp();
+    return () => { mounted = false; };
   }, []);
 
   const navigationTheme = {
