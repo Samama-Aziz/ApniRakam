@@ -1,81 +1,58 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { Spacing, Radius } from '@/constants/theme';
 import ThemedText from '@/components/common/ThemedText';
 
-export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
-  const { colors } = useTheme();
+// Tab bar: Home + Budgets on left, Reports + Settings on right, FAB centre.
+// Activity (transactions) is accessible via "See All" on the home screen.
+const TAB_CONFIG: Record<
+  string,
+  {
+    label: string;
+    iconFocused: string;
+    iconDefault: string;
+  }
+> = {
+  index:    { label: 'Home',     iconFocused: 'grid',      iconDefault: 'grid-outline'      },
+  budgets:  { label: 'Budgets',  iconFocused: 'wallet',    iconDefault: 'wallet-outline'    },
+  reports:  { label: 'Reports',  iconFocused: 'bar-chart', iconDefault: 'bar-chart-outline' },
+  settings: { label: 'Settings', iconFocused: 'settings',  iconDefault: 'settings-outline'  },
+};
+
+// The ordered visible tab names (must match TAB_CONFIG keys & route names)
+const LEFT_TABS  = ['index', 'budgets'];
+const RIGHT_TABS = ['reports', 'settings'];
+
+export function CustomTabBar({ state, descriptors, navigation }: any) {
+  const { colors, isDark } = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const handleOpenAddModal = () => {
     router.push('/add-transaction');
   };
 
-  const getTabIcon = (routeName: string, focused: boolean, color: string) => {
-    switch (routeName) {
-      case 'index':
-        return (
-          <Ionicons
-            name={focused ? 'grid' : 'grid-outline'}
-            size={22}
-            color={color}
-          />
-        );
-      case 'transactions':
-        return (
-          <Ionicons
-            name={focused ? 'receipt' : 'receipt-outline'}
-            size={22}
-            color={color}
-          />
-        );
-      case 'budgets':
-        return (
-          <Ionicons
-            name={focused ? 'wallet' : 'wallet-outline'}
-            size={22}
-            color={color}
-          />
-        );
-      case 'reports':
-        return (
-          <Ionicons
-            name={focused ? 'bar-chart' : 'bar-chart-outline'}
-            size={22}
-            color={color}
-          />
-        );
-      default:
-        return <Ionicons name="ellipse-outline" size={22} color={color} />;
-    }
-  };
+  const bottomPadding = insets.bottom > 0 ? insets.bottom : Platform.OS === 'ios' ? 20 : 10;
 
-  const getTabLabel = (routeName: string) => {
-    switch (routeName) {
-      case 'index':
-        return 'Home';
-      case 'transactions':
-        return 'Activity';
-      case 'budgets':
-        return 'Budgets';
-      case 'reports':
-        return 'Reports';
-      default:
-        return routeName;
-    }
-  };
+  // Build a name→routeIndex map for the current state
+  const routeIndexByName: Record<string, number> = {};
+  state.routes.forEach((r: any, i: number) => {
+    routeIndexByName[r.name] = i;
+  });
 
-  // Split routes: first 2 on left, last 2 on right of FAB
-  const leftRoutes = state.routes.slice(0, 2);
-  const rightRoutes = state.routes.slice(2, 4);
+  const renderTabItem = (routeName: string) => {
+    const cfg = TAB_CONFIG[routeName];
+    if (!cfg) return null;
 
-  const renderTabItem = (route: typeof state.routes[0], index: number) => {
-    const isFocused = state.index === index;
-    const { options } = descriptors[route.key];
+    const routeIndex = routeIndexByName[routeName];
+    if (routeIndex === undefined) return null;
+
+    const route = state.routes[routeIndex];
+    const isFocused = state.index === routeIndex;
     const color = isFocused ? colors.primary : colors.textMuted;
 
     const onPress = () => {
@@ -84,31 +61,35 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
         target: route.key,
         canPreventDefault: true,
       });
-
       if (!isFocused && !event.defaultPrevented) {
-        navigation.navigate(route.name);
+        navigation.navigate(routeName);
       }
     };
 
     return (
       <TouchableOpacity
-        key={route.key}
+        key={routeName}
         accessibilityRole="button"
         accessibilityState={isFocused ? { selected: true } : {}}
-        accessibilityLabel={options.tabBarAccessibilityLabel}
         onPress={onPress}
         style={styles.tabButton}
         activeOpacity={0.7}
       >
-        {getTabIcon(route.name, isFocused, color)}
+        <View style={styles.iconWrapper}>
+          <Ionicons
+            name={(isFocused ? cfg.iconFocused : cfg.iconDefault) as any}
+            size={22}
+            color={color}
+          />
+        </View>
         <ThemedText
-          style={[
-            styles.tabLabel,
-            { color, fontWeight: isFocused ? '700' : '500' },
-          ]}
+          style={[styles.tabLabel, { color, fontWeight: isFocused ? '700' : '500' }]}
         >
-          {getTabLabel(route.name)}
+          {cfg.label}
         </ThemedText>
+        {isFocused
+          ? <View style={[styles.activeIndicator, { backgroundColor: colors.primary }]} />
+          : <View style={styles.indicatorPlaceholder} />}
       </TouchableOpacity>
     );
   };
@@ -118,30 +99,41 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
       style={[
         styles.tabBarContainer,
         {
-          backgroundColor: '#111827', // Figma dark tab bar
-          borderTopColor: '#1E293B',
+          backgroundColor: colors.surface,
+          borderTopColor: colors.borderSubtle,
+          shadowColor: colors.cardShadow,
+          shadowOpacity: isDark ? 0.35 : 0.06,
+          paddingBottom: bottomPadding,
+          height: 60 + bottomPadding,
         },
       ]}
     >
-      {/* Left Tabs */}
+      {/* Left Tabs: Home, Activity */}
       <View style={styles.tabGroup}>
-        {leftRoutes.map((route, i) => renderTabItem(route, i))}
+        {LEFT_TABS.map(renderTabItem)}
       </View>
 
-      {/* Center Floating Action Button (+) */}
+      {/* Center FAB */}
       <View style={styles.fabWrapper}>
         <TouchableOpacity
           onPress={handleOpenAddModal}
-          style={[styles.fabButton, { backgroundColor: '#10B981' }]}
+          style={[
+            styles.fabButton,
+            {
+              backgroundColor: colors.primary,
+              borderColor: colors.surface,
+              shadowColor: colors.primary,
+            },
+          ]}
           activeOpacity={0.85}
         >
           <Ionicons name="add" size={30} color="#FFFFFF" />
         </TouchableOpacity>
       </View>
 
-      {/* Right Tabs */}
+      {/* Right Tabs: Reports, Settings */}
       <View style={styles.tabGroup}>
-        {rightRoutes.map((route, i) => renderTabItem(route, i + 2))}
+        {RIGHT_TABS.map(renderTabItem)}
       </View>
     </View>
   );
@@ -152,12 +144,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: Platform.OS === 'ios' ? 86 : 68,
-    paddingBottom: Platform.OS === 'ios' ? 24 : 8,
     paddingTop: 6,
     paddingHorizontal: Spacing.sm,
     borderTopWidth: 1,
     position: 'relative',
+    shadowOffset: { width: 0, height: -3 },
+    shadowRadius: 8,
+    elevation: 8,
   },
   tabGroup: {
     flex: 1,
@@ -169,18 +162,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: Spacing.xs,
-    minWidth: 56,
+    minWidth: 52,
+  },
+  iconWrapper: {
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   tabLabel: {
-    fontSize: 11,
+    fontSize: 10.5,
+    marginTop: 2,
+    letterSpacing: 0.2,
+  },
+  activeIndicator: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     marginTop: 3,
-    letterSpacing: 0.1,
+  },
+  indicatorPlaceholder: {
+    width: 4,
+    height: 4,
+    marginTop: 3,
   },
   fabWrapper: {
     width: 64,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -28, // Raised effect
+    marginTop: -26,
     zIndex: 10,
   },
   fabButton: {
@@ -189,13 +198,11 @@ const styles = StyleSheet.create({
     borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#10B981',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.45,
     shadowRadius: 10,
     elevation: 8,
     borderWidth: 3.5,
-    borderColor: '#0B0F17', // Cutout effect matching background
   },
 });
 

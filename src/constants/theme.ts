@@ -45,6 +45,7 @@ export const DarkColors: ThemeColors = {
   text: '#FFFFFF', // High-contrast White
   textSecondary: '#94A3B8', // Slate 400
   textMuted: '#64748B', // Slate 500
+  textTertiary: '#64748B',
   textInverse: '#0B0F17',
   textPrimaryBrand: '#10B981',
 
@@ -54,55 +55,56 @@ export const DarkColors: ThemeColors = {
 };
 
 export const LightColors: ThemeColors = {
-  // Brand
-  primary: '#059669', // Emerald 600
-  primaryLight: '#ECFDF5',
+  // Brand - Executive Jewel Emerald (striking contrast on porcelain)
+  primary: '#059669', // Emerald 600 - rich, vivid, crisp
+  primaryLight: '#ECFDF5', // Luminous mint tint
   primaryDark: '#047857',
   primaryForeground: '#FFFFFF',
 
   // Secondary & Accent
-  secondary: '#10B981',
-  secondaryLight: '#D1FAE5',
+  secondary: '#0D9488', // Deep Jewel Teal
+  secondaryLight: '#F0FDFA',
   secondaryForeground: '#FFFFFF',
-  accent: '#D97706',
+  accent: '#D97706', // Rich Amber Gold
   accentLight: '#FEF3C7',
 
   // Finance Specific
-  income: '#059669',
+  income: '#059669', // Deep Emerald
   incomeLight: '#ECFDF5',
   incomeForeground: '#FFFFFF',
-  expense: '#DC2626',
-  expenseLight: '#FEF2F2',
+  expense: '#E11D48', // Vibrant Rose/Crimson (modern luxury fintech)
+  expenseLight: '#FFE4E6',
   expenseForeground: '#FFFFFF',
 
   // Feedback
   success: '#059669',
   warning: '#D97706',
-  error: '#DC2626',
+  error: '#E11D48',
   info: '#2563EB',
 
-  // Surfaces & Backgrounds
-  background: '#F1F5F9', // Clean Slate
-  backgroundSecondary: '#E2E8F0',
-  surface: '#FFFFFF',
+  // Surfaces & Backgrounds - Premium Porcelain Canvas
+  background: '#F6F8FB', // Crisp, modern luxury canvas
+  backgroundSecondary: '#EDF2F7', // Soft secondary layer
+  surface: '#FFFFFF', // Pure, radiant white
   surfaceElevated: '#FFFFFF',
-  surfaceMuted: '#F8FAFC',
+  surfaceMuted: '#F1F5F9',
 
-  // Borders
-  border: '#CBD5E1',
-  borderSubtle: '#E2E8F0',
+  // Borders - Hairline, ultra-refined
+  border: '#E2E8F0', // Soft modern hairline
+  borderSubtle: '#EDF2F7', // Whispering divider
   borderFocus: '#059669',
 
-  // Text
-  text: '#0F172A',
-  textSecondary: '#475569',
-  textMuted: '#94A3B8',
+  // Text - Midnight Obsidian (Apple / Stripe grade crispness)
+  text: '#0B0F19', // Deepest midnight - razor sharp
+  textSecondary: '#475569', // Slate 600 - warm & legible
+  textMuted: '#8A99AD', // Cool slate for meta
+  textTertiary: '#94A3B8',
   textInverse: '#FFFFFF',
   textPrimaryBrand: '#059669',
 
-  // Overlays
-  overlay: 'rgba(15, 23, 42, 0.4)',
-  cardShadow: 'rgba(15, 23, 42, 0.08)',
+  // Overlays & Elevation
+  overlay: 'rgba(11, 15, 25, 0.45)',
+  cardShadow: '#091E42', // Solid base for realistic diffusion
 };
 
 export const Colors = {
@@ -218,9 +220,9 @@ export const Typography: Record<TypographyVariant, TextStyle> = {
 export const Shadows = {
   sm: Platform.select({
     ios: {
-      shadowColor: '#000000',
+      shadowColor: '#091E42',
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.2,
+      shadowOpacity: 0.06,
       shadowRadius: 3,
     },
     android: { elevation: 2 },
@@ -228,29 +230,29 @@ export const Shadows = {
   }),
   md: Platform.select({
     ios: {
-      shadowColor: '#000000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
+      shadowColor: '#091E42',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.08,
       shadowRadius: 8,
     },
-    android: { elevation: 4 },
+    android: { elevation: 3 },
     default: {},
   }),
   lg: Platform.select({
     ios: {
-      shadowColor: '#000000',
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.4,
+      shadowColor: '#091E42',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.1,
       shadowRadius: 16,
     },
-    android: { elevation: 8 },
+    android: { elevation: 6 },
     default: {},
   }),
   fab: Platform.select({
     ios: {
-      shadowColor: '#10B981',
+      shadowColor: '#059669',
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.4,
+      shadowOpacity: 0.35,
       shadowRadius: 10,
     },
     android: { elevation: 8 },

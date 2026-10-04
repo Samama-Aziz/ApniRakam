@@ -1,14 +1,12 @@
-import React from 'react';
-import { View, StyleSheet, ViewStyle, Image } from 'react-native';
-import { useTheme } from '@/hooks/useTheme';
-import { Spacing, Radius } from '@/constants/theme';
 import ThemedText from '@/components/common/ThemedText';
+import { Radius, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/useTheme';
+import { Image, StyleSheet, View, ViewStyle } from 'react-native';
 
 export interface ApniRakamLogoProps {
   size?: 'sm' | 'md' | 'lg' | 'splash';
   layout?: 'horizontal' | 'vertical' | 'iconOnly';
   showTagline?: boolean;
-  showUrdu?: boolean;
   style?: ViewStyle;
 }
 
@@ -16,69 +14,41 @@ export function ApniRakamLogo({
   size = 'md',
   layout = 'horizontal',
   showTagline = false,
-  showUrdu = true,
   style,
 }: ApniRakamLogoProps) {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
   let iconSize: number = 44;
   let textSize: 'title3' | 'title2' | 'title1' | 'display' = 'title2';
   let taglineSize: 'caption' | 'subtitle' = 'caption';
-  let urduSize: number = 13;
   let badgeRadius: number = Radius.lg;
 
   if (size === 'sm') {
-    iconSize = 34;
+    iconSize = 36;
     textSize = 'title3';
-    urduSize = 11;
     badgeRadius = Radius.md;
   } else if (size === 'lg') {
-    iconSize = 58;
+    iconSize = 64;
     textSize = 'title1';
-    urduSize = 16;
     badgeRadius = Radius.xl;
   } else if (size === 'splash') {
-    iconSize = 88;
+    iconSize = 100;
     textSize = 'display';
     taglineSize = 'subtitle';
-    urduSize = 22;
-    badgeRadius = Radius['2xl'];
+    badgeRadius = 24;
   }
 
   const renderIcon = () => (
-    <View
-      style={[
-        styles.iconWrapper,
-        {
+    <View style={[styles.iconWrapper, size === 'splash' && styles.splashIconWrapper]}>
+      <Image
+        source={require('@/assets/images/logo.png')}
+        style={{
           width: iconSize,
           height: iconSize,
           borderRadius: badgeRadius,
-          backgroundColor: '#FFFFFF',
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.emblemBadge,
-          {
-            width: iconSize,
-            height: iconSize,
-            borderRadius: badgeRadius,
-          },
-        ]}
-      >
-        <ThemedText
-          style={[
-            styles.emblemText,
-            {
-              fontSize: iconSize * 0.42,
-              color: '#064E3B',
-            },
-          ]}
-        >
-          AR
-        </ThemedText>
-      </View>
+        }}
+        resizeMode="contain"
+      />
     </View>
   );
 
@@ -112,20 +82,6 @@ export function ApniRakamLogo({
           </ThemedText>
         </View>
 
-        {showUrdu && (
-          <ThemedText
-            style={[
-              styles.urduText,
-              {
-                fontSize: urduSize,
-                color: '#34D399',
-              },
-            ]}
-          >
-            اپنی رقم
-          </ThemedText>
-        )}
-
         {showTagline && (
           <ThemedText
             variant={taglineSize}
@@ -150,23 +106,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   iconWrapper: {
-    overflow: 'hidden',
-    shadowColor: '#10B981',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  emblemBadge: {
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emblemText: {
-    fontWeight: '900',
-    letterSpacing: 0.5,
+  splashIconWrapper: {
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    elevation: 12,
   },
   textContainerHorizontal: {
     marginLeft: Spacing.md,
@@ -183,12 +134,6 @@ const styles = StyleSheet.create({
   brandText: {
     fontWeight: '800',
     letterSpacing: -0.4,
-  },
-  urduText: {
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginTop: 2,
-    textAlign: 'center',
   },
   tagline: {
     marginTop: Spacing.xs,

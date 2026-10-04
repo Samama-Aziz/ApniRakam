@@ -44,6 +44,7 @@ export interface ThemeColors {
   text: string;
   textSecondary: string;
   textMuted: string;
+  textTertiary: string;
   textInverse: string;
   textPrimaryBrand: string;
 

@@ -1,26 +1,33 @@
 import React, { useEffect } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import * as SplashScreen from 'expo-splash-screen';
 import { useTheme } from '@/hooks/useTheme';
+import { useAppStore } from '@/store/useAppStore';
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
+// Immediately hide native splash screen so custom animated screen displays right away
+SplashScreen.hideAsync().catch(() => {});
 
 export default function RootLayout() {
+  const { hydrateFromStorage, loadAppData } = useAppStore();
   const { colors, isDark } = useTheme();
 
   useEffect(() => {
     let mounted = true;
     async function prepareApp() {
       try {
+        // Load persisted prefs (onboarding state, name, currency, theme) first
+        await hydrateFromStorage();
+
+        // Then initialise the DB + load live data (native only)
         if (Platform.OS !== 'web') {
           const { initDatabase } = await import('@/database');
           await initDatabase();
+          await loadAppData();
         }
       } catch (error) {
-        console.error('[Database] Initialization failed:', error);
+        console.error('[App] Startup failed:', error);
       } finally {
         if (mounted) SplashScreen.hideAsync().catch(() => {});
       }
@@ -29,25 +36,13 @@ export default function RootLayout() {
     return () => { mounted = false; };
   }, []);
 
-  const navigationTheme = {
-    ...DarkTheme,
-    colors: {
-      ...DarkTheme.colors,
-      primary: colors.primary,
-      background: '#0B0F17',
-      card: '#151D2A',
-      text: '#FFFFFF',
-      border: '#222F45',
-    },
-  };
-
   return (
-    <ThemeProvider value={navigationTheme}>
-      <StatusBar style="light" />
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0B0F17' },
+          contentStyle: { backgroundColor: colors.background },
           animation: 'fade',
         }}
       >
@@ -63,6 +58,6 @@ export default function RootLayout() {
           }}
         />
       </Stack>
-    </ThemeProvider>
+    </View>
   );
 }

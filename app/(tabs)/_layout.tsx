@@ -34,6 +34,12 @@ export default function TabLayout() {
           title: 'Reports',
         }}
       />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: 'Settings',
+        }}
+      />
     </Tabs>
   );
 }

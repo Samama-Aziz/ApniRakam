@@ -4,8 +4,11 @@ import { Platform } from 'react-native';
 export const STORAGE_KEYS = {
   HAS_ONBOARDED: 'apnirakam_has_onboarded',
   USER_PIN: 'apnirakam_user_pin',
-  AUTH_TOKEN: 'apnirakam_auth_token',
   USER_PROFILE: 'apnirakam_user_profile',
+  DEFAULT_CATEGORY: 'apnirakam_default_category',
+  DEFAULT_ACCOUNT: 'apnirakam_default_account',
+  DEFAULT_BUDGET_PERIOD: 'apnirakam_default_budget_period',
+  THEME_MODE: 'apnirakam_theme_mode',
 } as const;
 
 export async function setSecureItem(key: string, value: string): Promise<void> {

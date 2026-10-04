@@ -1,1 +1,0 @@
-export { useTheme, default } from './useTheme';

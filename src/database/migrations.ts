@@ -1,5 +1,5 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { CREATE_ACCOUNTS_TABLE, CREATE_BUDGETS_TABLE, CREATE_CATEGORIES_TABLE, CREATE_INDEXES, CREATE_SYNC_QUEUE_TABLE, CREATE_TRANSACTIONS_TABLE, DATABASE_VERSION } from './schema';
+import { CREATE_ACCOUNTS_TABLE, CREATE_BUDGETS_TABLE, CREATE_CATEGORIES_TABLE, CREATE_INDEXES, CREATE_TRANSACTIONS_TABLE, DATABASE_VERSION } from './schema';
 
 const timestamp = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -24,7 +24,7 @@ async function migratePrototypeSchema(database: SQLiteDatabase): Promise<void> {
   await database.execAsync('PRAGMA foreign_keys = OFF;');
   try {
     for (const table of legacyTables) await database.execAsync(`ALTER TABLE ${table} RENAME TO ${table}_legacy_v0;`);
-    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_SYNC_QUEUE_TABLE}${CREATE_INDEXES}`);
+    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_INDEXES}`);
 
     if (legacyTables.includes('accounts')) await database.execAsync(`
       INSERT OR IGNORE INTO accounts (id, name, type, currency, opening_balance, is_active, created_at, updated_at)
@@ -37,10 +37,10 @@ async function migratePrototypeSchema(database: SQLiteDatabase): Promise<void> {
     if (legacyTables.includes('transactions')) await database.execAsync(`
       INSERT OR IGNORE INTO categories (id, name, type, icon, is_default, created_at, updated_at)
       SELECT 'legacy-category-' || lower(replace(category, ' ', '-')), category, type, NULL, 0, ${timestamp}, ${timestamp} FROM transactions_legacy_v0 WHERE type IN ('expense', 'income');
-      INSERT OR IGNORE INTO transactions (id, type, amount, account_id, category_id, date, note, created_at, updated_at, deleted_at, sync_status)
+      INSERT OR IGNORE INTO transactions (id, type, amount, account_id, category_id, date, note, created_at, updated_at, deleted_at)
       SELECT t.id, t.type, t.amount, t.accountId,
              COALESCE((SELECT c.id FROM categories c WHERE c.id = t.category), (SELECT c.id FROM categories c WHERE lower(c.name) = lower(t.category) AND c.type = t.type), 'legacy-category-' || lower(replace(t.category, ' ', '-'))),
-             t.date, t.notes, COALESCE(t.createdAt, ${timestamp}), COALESCE(t.updatedAt, t.createdAt, ${timestamp}), NULL, 'pending'
+             t.date, t.notes, COALESCE(t.createdAt, ${timestamp}), COALESCE(t.updatedAt, t.createdAt, ${timestamp}), NULL
       FROM transactions_legacy_v0 t WHERE t.type IN ('expense', 'income') AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = t.accountId);
     `);
     if (legacyTables.includes('budgets')) await database.execAsync(`
@@ -58,8 +58,18 @@ export async function runMigrations(database: SQLiteDatabase): Promise<void> {
   let currentVersion = version?.user_version ?? 0;
   if (currentVersion < 1) {
     await migratePrototypeSchema(database);
-    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_SYNC_QUEUE_TABLE}${CREATE_INDEXES}`);
+    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_INDEXES}`);
     currentVersion = 1;
+  }
+  if (currentVersion < 2 && await tableExists(database, 'transactions')) {
+    const transactionColumns = await columnsFor(database, 'transactions');
+    if (transactionColumns.includes('sync_status')) {
+      await database.execAsync('ALTER TABLE transactions DROP COLUMN sync_status;');
+    }
+    if (await tableExists(database, 'sync_queue')) {
+      await database.execAsync('DROP TABLE sync_queue;');
+    }
+    currentVersion = 2;
   }
   if (currentVersion > DATABASE_VERSION) throw new Error(`Database version ${currentVersion} is newer than this app supports.`);
   await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);

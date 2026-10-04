@@ -1,5 +1,5 @@
 export const DB_NAME = 'apnirakam.db';
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 2;
 
 export const CREATE_ACCOUNTS_TABLE = `
   CREATE TABLE IF NOT EXISTS accounts (
@@ -22,7 +22,7 @@ export const CREATE_TRANSACTIONS_TABLE = `
     id TEXT PRIMARY KEY NOT NULL, type TEXT NOT NULL CHECK (type IN ('expense', 'income')),
     amount REAL NOT NULL CHECK (amount >= 0), account_id TEXT NOT NULL, category_id TEXT NOT NULL,
     date TEXT NOT NULL, note TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-    deleted_at TEXT, sync_status TEXT NOT NULL DEFAULT 'pending',
+    deleted_at TEXT,
     FOREIGN KEY (account_id) REFERENCES accounts(id), FOREIGN KEY (category_id) REFERENCES categories(id)
   );
 `;
@@ -33,22 +33,14 @@ export const CREATE_BUDGETS_TABLE = `
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY (category_id) REFERENCES categories(id)
   );
 `;
-export const CREATE_SYNC_QUEUE_TABLE = `
-  CREATE TABLE IF NOT EXISTS sync_queue (
-    id TEXT PRIMARY KEY NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL,
-    operation TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
-    retry_count INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
-  );
-`;
 export const CREATE_INDEXES = `
   CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions(account_id);
   CREATE INDEX IF NOT EXISTS idx_transactions_category_id ON transactions(category_id);
   CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
   CREATE INDEX IF NOT EXISTS idx_transactions_deleted_at ON transactions(deleted_at);
   CREATE INDEX IF NOT EXISTS idx_budgets_category_id ON budgets(category_id);
-  CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
 `;
 export const DEFAULT_CATEGORIES = [
   ...['Food', 'Chai', 'Transport', 'Petrol', 'Bills', 'Shopping', 'Health', 'Education', 'Mobile & Internet', 'Entertainment', 'Rent', 'Other'].map((name) => ({ name, type: 'expense' as const })),
-  ...['Salary', 'Freelance', 'Business', 'Gift', 'Other'].map((name) => ({ name, type: 'income' as const })),
+  ...['Salary', 'Freelance', 'Business', 'Gift', 'Miscellaneous'].map((name) => ({ name, type: 'income' as const })),
 ];

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,6 +8,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   StatusBar,
+  Modal,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -17,88 +20,301 @@ import { useAppStore } from '@/store/useAppStore';
 import { Spacing, Radius } from '@/constants/theme';
 import ThemedText from '@/components/common/ThemedText';
 import ThemedButton from '@/components/common/ThemedButton';
+import { categoryRepository } from '@/database';
+import { transactionRepository } from '@/database';
+import type { CategoryRecord, AccountRecord } from '@/database/repositories/types';
+import { formatDate } from '@/utils/formatters';
+import { getCategoryMeta } from '@/utils/categoryMeta';
+import { AddCategoryModal } from '@/components/modals/AddCategoryModal';
+import { AddAccountModal } from '@/components/modals/AddAccountModal';
+import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
 
-interface CategoryOption {
-  id: string;
-  name: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  color: string;
+const ACCOUNT_ICON_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
+  cash: 'wallet-outline',
+  bank: 'business-outline',
+  wallet: 'phone-portrait-outline',
+  savings: 'save-outline',
+  credit: 'card-outline',
+};
+
+// ─── Simple inline date picker modal ─────────────────────────────────────────
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+interface DatePickerModalProps {
+  visible: boolean;
+  selected: Date;
+  onConfirm: (date: Date) => void;
+  onClose: () => void;
 }
 
-const EXPENSE_CATEGORIES: CategoryOption[] = [
-  { id: 'food', name: 'Food & Dining', icon: 'fast-food-outline', color: '#F59E0B' },
-  { id: 'transport', name: 'Transport', icon: 'car-outline', color: '#3B82F6' },
-  { id: 'bills', name: 'Bills & Utilities', icon: 'flash-outline', color: '#EF4444' },
-  { id: 'shopping', name: 'Shopping', icon: 'cart-outline', color: '#EC4899' },
-  { id: 'health', name: 'Healthcare', icon: 'medkit-outline', color: '#10B981' },
-  { id: 'entertainment', name: 'Entertainment', icon: 'film-outline', color: '#8B5CF6' },
-  { id: 'groceries', name: 'Groceries', icon: 'basket-outline', color: '#14B8A6' },
-  { id: 'other', name: 'Other', icon: 'ellipsis-horizontal-outline', color: '#6B7280' },
-];
-
-const INCOME_CATEGORIES: CategoryOption[] = [
-  { id: 'salary', name: 'Salary', icon: 'cash-outline', color: '#10B981' },
-  { id: 'business', name: 'Business', icon: 'briefcase-outline', color: '#3B82F6' },
-  { id: 'freelance', name: 'Freelance', icon: 'laptop-outline', color: '#8B5CF6' },
-  { id: 'investment', name: 'Investments', icon: 'trending-up-outline', color: '#F59E0B' },
-  { id: 'gift', name: 'Gifts & Rewards', icon: 'gift-outline', color: '#EC4899' },
-  { id: 'other_in', name: 'Other Income', icon: 'add-circle-outline', color: '#14B8A6' },
-];
-
-const ACCOUNTS = [
-  { id: 'cash', name: 'Cash in Hand', icon: 'wallet-outline' as const },
-  { id: 'meezan', name: 'Meezan Bank', icon: 'business-outline' as const },
-  { id: 'sadapay', name: 'SadaPay', icon: 'card-outline' as const },
-  { id: 'easypaisa', name: 'EasyPaisa', icon: 'phone-portrait-outline' as const },
-];
-
-export default function AddTransactionScreen() {
-  const router = useRouter();
+function DatePickerModal({ visible, selected, onConfirm, onClose }: DatePickerModalProps) {
   const { colors } = useTheme();
-  const { totalBalance, totalIncome, totalExpenses, updateFinancialSummary } = useAppStore();
+  const [day, setDay] = useState(selected.getDate());
+  const [month, setMonth] = useState(selected.getMonth());
+  const [year, setYear] = useState(selected.getFullYear());
 
-  const [type, setType] = useState<'expense' | 'income'>('expense');
-  const [amount, setAmount] = useState<string>('850');
-  const [selectedCategory, setSelectedCategory] = useState<string>('food');
-  const [selectedAccount, setSelectedAccount] = useState<string>('cash');
-  const [note, setNote] = useState<string>('');
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-  const categories = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
-
-  const handleSave = () => {
-    const numAmount = parseFloat(amount) || 0;
-    if (numAmount > 0) {
-      if (type === 'income') {
-        updateFinancialSummary({
-          totalBalance: totalBalance + numAmount,
-          totalIncome: totalIncome + numAmount,
-          totalExpenses: totalExpenses,
-        });
-      } else {
-        updateFinancialSummary({
-          totalBalance: totalBalance - numAmount,
-          totalIncome: totalIncome,
-          totalExpenses: totalExpenses + numAmount,
-        });
-      }
-    }
-    router.back();
+  const handleConfirm = () => {
+    const safeDay = Math.min(day, daysInMonth);
+    onConfirm(new Date(year, month, safeDay));
   };
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B0F17" />
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={dp.overlay}>
+        <View style={[dp.sheet, { backgroundColor: colors.surface, borderTopColor: colors.borderSubtle }]}>
+          <View style={dp.header}>
+            <ThemedText style={[dp.title, { color: colors.text }]}>Select Date</ThemedText>
+            <TouchableOpacity onPress={onClose}>
+              <Ionicons name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Pill selectors row */}
+          <View style={dp.row}>
+            {/* Day */}
+            <View style={dp.column}>
+              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>DAY</ThemedText>
+              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
+                {days.map((d) => (
+                  <TouchableOpacity
+                    key={d}
+                    onPress={() => setDay(d)}
+                    style={[
+                      dp.item,
+                      day === d && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 }
+                    ]}
+                  >
+                    <ThemedText style={[dp.itemText, { color: colors.textSecondary }, day === d && { color: colors.primary, fontWeight: '800' }]}>
+                      {String(d).padStart(2, '0')}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Month */}
+            <View style={dp.column}>
+              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>MONTH</ThemedText>
+              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
+                {MONTHS.map((m, i) => (
+                  <TouchableOpacity
+                    key={m}
+                    onPress={() => setMonth(i)}
+                    style={[
+                      dp.item,
+                      month === i && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 }
+                    ]}
+                  >
+                    <ThemedText style={[dp.itemText, { color: colors.textSecondary }, month === i && { color: colors.primary, fontWeight: '800' }]}>
+                      {m}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Year */}
+            <View style={dp.column}>
+              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>YEAR</ThemedText>
+              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
+                {years.map((y) => (
+                  <TouchableOpacity
+                    key={y}
+                    onPress={() => setYear(y)}
+                    style={[
+                      dp.item,
+                      year === y && { backgroundColor: colors.primaryLight, borderColor: colors.primary, borderWidth: 1 }
+                    ]}
+                  >
+                    <ThemedText style={[dp.itemText, { color: colors.textSecondary }, year === y && { color: colors.primary, fontWeight: '800' }]}>
+                      {y}
+                    </ThemedText>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+
+          <TouchableOpacity style={[dp.confirmBtn, { backgroundColor: colors.primary }]} onPress={handleConfirm}>
+            <ThemedText style={dp.confirmText}>Confirm Date</ThemedText>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const dp = StyleSheet.create({
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 40, borderTopWidth: 1 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 17, fontWeight: '700' },
+  row: { flexDirection: 'row', gap: 12 },
+  column: { flex: 1 },
+  colLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.8, textAlign: 'center', marginBottom: 8 },
+  scroll: { height: 180 },
+  item: { paddingVertical: 10, alignItems: 'center', borderRadius: 10, marginBottom: 2 },
+  itemText: { fontSize: 15, fontWeight: '500' },
+  confirmBtn: { borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  confirmText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+});
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+
+export default function AddTransactionScreen() {
+  const router = useRouter();
+  const { colors, isDark } = useTheme();
+  const { accounts, addTransactionToStore } = useAppStore();
+
+  // Form state
+  const [type, setType] = useState<'expense' | 'income'>('expense');
+  const [amount, setAmount] = useState('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [note, setNote] = useState('');
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+
+  // Modals for adding custom categories & accounts
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [showAddAccountModal, setShowAddAccountModal] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'destructive' | 'warning' | 'info' | 'success' | 'default';
+    buttons?: AlertButton[];
+  } | null>(null);
+
+  // DB-loaded data
+  const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Load categories from DB when type changes
+  const loadCategories = useCallback(async (txType: 'expense' | 'income', selectCatId?: string) => {
+    setIsLoadingCategories(true);
+    try {
+      const rawCats = await categoryRepository.getByType(txType);
+      // Always sort "Other/Others" to the bottom
+      const cats = [...rawCats].sort((a, b) => {
+        const aOther = a.name.toLowerCase().includes('other');
+        const bOther = b.name.toLowerCase().includes('other');
+        if (aOther && !bOther) return 1;
+        if (!aOther && bOther) return -1;
+        return 0;
+      });
+      setCategories(cats);
+      if (selectCatId) {
+        setSelectedCategoryId(selectCatId);
+      } else if (cats.length > 0) {
+        setSelectedCategoryId((prev) => (cats.some((c) => c.id === prev) ? prev : cats[0].id));
+      }
+    } catch (e) {
+      console.error('[AddTransaction] Failed to load categories:', e);
+    } finally {
+      setIsLoadingCategories(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCategories(type);
+  }, [type, loadCategories]);
+
+  // Auto-select first account from store if none selected
+  useEffect(() => {
+    if (accounts.length > 0 && (!selectedAccountId || !accounts.some((a) => a.id === selectedAccountId))) {
+      setSelectedAccountId(accounts[0].id);
+    }
+  }, [accounts, selectedAccountId]);
+
+  // ─── Validation & Save ─────────────────────────────────────────────────────
+
+  const handleSave = async () => {
+    const numAmount = parseFloat(amount.replace(/,/g, ''));
+    if (!amount || isNaN(numAmount) || numAmount <= 0) {
+      setAlertConfig({
+        visible: true,
+        title: 'Amount Required',
+        message: 'Please enter a valid amount greater than 0.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+    if (!selectedCategoryId) {
+      setAlertConfig({
+        visible: true,
+        title: 'Category Required',
+        message: 'Please select a category for this transaction.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+    if (!selectedAccountId) {
+      setAlertConfig({
+        visible: true,
+        title: 'Account Required',
+        message: 'Please select an account.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const tx = await transactionRepository.create({
+        type,
+        amount: numAmount,
+        account_id: selectedAccountId,
+        category_id: selectedCategoryId,
+        date: selectedDate.toISOString(),
+        note: note.trim() || null,
+      });
+      // Optimistic update — no need to reload all data
+      addTransactionToStore(tx);
+      router.back();
+    } catch (e) {
+      console.error('[AddTransaction] Save failed:', e);
+      setAlertConfig({
+        visible: true,
+        title: 'Save Failed',
+        message: 'Something went wrong saving the transaction. Please try again.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTypeSwitch = (newType: 'expense' | 'income') => {
+    setType(newType);
+    setSelectedCategoryId('');
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={colors.background} />
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.keyboardView}
         >
           {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#FFFFFF" />
+          <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
+            <TouchableOpacity onPress={() => router.back()} style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}>
+              <Ionicons name="close" size={24} color={colors.text} />
             </TouchableOpacity>
-            <ThemedText variant="title3" style={{ color: '#FFFFFF', fontWeight: '700' }}>
+            <ThemedText variant="title3" style={{ color: colors.text, fontWeight: '700' }}>
               Add Transaction
             </ThemedText>
             <View style={{ width: 40 }} />
@@ -107,194 +323,268 @@ export default function AddTransactionScreen() {
           <ScrollView
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
           >
-            {/* Income / Expense Pill Switch (Figma Screen 4) */}
-            <View style={styles.toggleContainer}>
+            {/* Income / Expense Toggle */}
+            <View style={[styles.toggleContainer, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.2 : 0.04 }]}>
               <TouchableOpacity
-                onPress={() => {
-                  setType('expense');
-                  setSelectedCategory('food');
-                }}
-                style={[
-                  styles.togglePill,
-                  type === 'expense' && { backgroundColor: '#EF4444' },
-                ]}
+                onPress={() => handleTypeSwitch('expense')}
+                style={[styles.togglePill, type === 'expense' && { backgroundColor: colors.expense }]}
               >
-                <ThemedText
-                  style={[
-                    styles.toggleText,
-                    type === 'expense' && { color: '#FFFFFF', fontWeight: '700' },
-                  ]}
-                >
+                <Ionicons name="arrow-up" size={14} color={type === 'expense' ? '#FFFFFF' : colors.textSecondary} style={{ marginRight: 4 }} />
+                <ThemedText style={[styles.toggleText, { color: colors.textSecondary }, type === 'expense' && { color: '#FFFFFF', fontWeight: '700' }]}>
                   Expense
                 </ThemedText>
               </TouchableOpacity>
-
               <TouchableOpacity
-                onPress={() => {
-                  setType('income');
-                  setSelectedCategory('salary');
-                }}
-                style={[
-                  styles.togglePill,
-                  type === 'income' && { backgroundColor: '#10B981' },
-                ]}
+                onPress={() => handleTypeSwitch('income')}
+                style={[styles.togglePill, type === 'income' && { backgroundColor: colors.income }]}
               >
-                <ThemedText
-                  style={[
-                    styles.toggleText,
-                    type === 'income' && { color: '#FFFFFF', fontWeight: '700' },
-                  ]}
-                >
+                <Ionicons name="arrow-down" size={14} color={type === 'income' ? '#FFFFFF' : colors.textSecondary} style={{ marginRight: 4 }} />
+                <ThemedText style={[styles.toggleText, { color: colors.textSecondary }, type === 'income' && { color: '#FFFFFF', fontWeight: '700' }]}>
                   Income
                 </ThemedText>
               </TouchableOpacity>
             </View>
 
-            {/* Amount Input Box */}
-            <View style={styles.amountCard}>
-              <ThemedText variant="caption" style={{ color: '#94A3B8', marginBottom: 4 }}>
-                ENTER AMOUNT
-              </ThemedText>
+            {/* Amount Input */}
+            <View style={[styles.amountCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.25 : 0.05 }]}>
+              <ThemedText variant="caption" style={[styles.amountLabel, { color: colors.textSecondary }]}>ENTER AMOUNT</ThemedText>
               <View style={styles.amountInputRow}>
-                <ThemedText style={styles.currencyPrefix}>PKR</ThemedText>
+                <ThemedText style={[styles.currencyPrefix, { color: type === 'income' ? colors.income : colors.expense }]}>
+                  PKR
+                </ThemedText>
                 <TextInput
                   value={amount}
                   onChangeText={setAmount}
                   keyboardType="numeric"
                   placeholder="0"
-                  placeholderTextColor="#64748B"
-                  style={styles.amountInput}
+                  placeholderTextColor={colors.textTertiary}
+                  style={[styles.amountInput, { color: colors.text }]}
                   autoFocus={false}
+                  returnKeyType="done"
                 />
               </View>
             </View>
 
+            {/* Date Picker */}
+            <View style={styles.section}>
+              <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>DATE</ThemedText>
+              <TouchableOpacity
+                style={[styles.dateButton, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.15 : 0.03 }]}
+                onPress={() => setShowDatePicker(true)}
+              >
+                <Ionicons name="calendar-outline" size={18} color={colors.primary} style={{ marginRight: 10 }} />
+                <ThemedText style={[styles.dateText, { color: colors.text }]}>
+                  {formatDate(selectedDate, 'medium')}
+                </ThemedText>
+                <Ionicons name="chevron-down" size={16} color={colors.textSecondary} style={{ marginLeft: 'auto' }} />
+              </TouchableOpacity>
+            </View>
+
             {/* Category Selector */}
             <View style={styles.section}>
-              <ThemedText variant="label" style={styles.sectionLabel}>
-                SELECT CATEGORY
-              </ThemedText>
-              <View style={styles.categoryGrid}>
-                {categories.map((cat) => {
-                  const isSelected = selectedCategory === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      onPress={() => setSelectedCategory(cat.id)}
-                      style={[
-                        styles.categoryItem,
-                        isSelected && {
-                          borderColor: type === 'income' ? '#10B981' : '#EF4444',
-                          backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                        },
-                      ]}
-                    >
-                      <View style={[styles.categoryIconCircle, { backgroundColor: cat.color + '25' }]}>
-                        <Ionicons name={cat.icon} size={20} color={cat.color} />
-                      </View>
-                      <ThemedText
-                        style={[
-                          styles.categoryName,
-                          isSelected && { color: '#FFFFFF', fontWeight: '700' },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {cat.name}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={styles.sectionHeaderRow}>
+                <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>SELECT CATEGORY</ThemedText>
               </View>
+              {isLoadingCategories ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator color={colors.primary} size="small" />
+                  <ThemedText style={[styles.loadingText, { color: colors.textSecondary }]}>Loading categories…</ThemedText>
+                </View>
+              ) : (
+                <View style={styles.categoryGrid}>
+                  {categories.map((cat) => {
+                    const isSelected = selectedCategoryId === cat.id;
+                    const meta = getCategoryMeta(cat.name, categories);
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => setSelectedCategoryId(cat.id)}
+                        style={[
+                          styles.categoryItem,
+                          { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.15 : 0.03 },
+                          isSelected && {
+                            borderColor: meta.color,
+                            backgroundColor: meta.color + '20',
+                          },
+                        ]}
+                      >
+                        <View style={[styles.categoryIconCircle, { backgroundColor: meta.color + '25' }]}>
+                          <Ionicons name={meta.icon} size={20} color={meta.color} />
+                        </View>
+                        <ThemedText
+                          style={[styles.categoryName, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '700' }]}
+                          numberOfLines={1}
+                        >
+                          {cat.name}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    onPress={() => setShowAddCategoryModal(true)}
+                    style={[
+                      styles.categoryItem,
+                      styles.addCategoryCard,
+                      { backgroundColor: colors.primaryLight, borderColor: colors.primary + '40' }
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.categoryIconCircle, { backgroundColor: colors.surface }]}>
+                      <Ionicons name="add" size={20} color={colors.primary} />
+                    </View>
+                    <ThemedText style={[styles.categoryName, { color: colors.primary, fontWeight: '700' }]} numberOfLines={1}>
+                      + New
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
 
             {/* Account Selector */}
             <View style={styles.section}>
-              <ThemedText variant="label" style={styles.sectionLabel}>
-                PAID VIA / ACCOUNT
-              </ThemedText>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
-                {ACCOUNTS.map((acc) => {
-                  const isSelected = selectedAccount === acc.id;
-                  return (
-                    <TouchableOpacity
-                      key={acc.id}
-                      onPress={() => setSelectedAccount(acc.id)}
-                      style={[
-                        styles.accountChip,
-                        isSelected && {
-                          borderColor: '#10B981',
-                          backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                        },
-                      ]}
-                    >
-                      <Ionicons
-                        name={acc.icon}
-                        size={16}
-                        color={isSelected ? '#10B981' : '#94A3B8'}
-                        style={{ marginRight: 6 }}
-                      />
-                      <ThemedText
+              <View style={styles.sectionHeaderRow}>
+                <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>PAID VIA / ACCOUNT</ThemedText>
+              </View>
+              {accounts.length === 0 ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
+                  <ThemedText style={[styles.loadingText, { color: colors.textSecondary }]}>No accounts found.</ThemedText>
+                  <TouchableOpacity
+                    onPress={() => setShowAddAccountModal(true)}
+                    style={[styles.addInlineBtn, { backgroundColor: colors.primaryLight, borderColor: colors.primary + '30' }]}
+                  >
+                    <Ionicons name="add" size={14} color={colors.primary} />
+                    <ThemedText style={[styles.addInlineText, { color: colors.primary }]}>Create Account</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
+                  {accounts.map((acc: AccountRecord) => {
+                    const isSelected = selectedAccountId === acc.id;
+                    const icon = ACCOUNT_ICON_MAP[acc.type] ?? 'wallet-outline';
+                    return (
+                      <TouchableOpacity
+                        key={acc.id}
+                        onPress={() => setSelectedAccountId(acc.id)}
                         style={[
-                          styles.accountChipText,
-                          isSelected && { color: '#FFFFFF', fontWeight: '700' },
+                          styles.accountChip,
+                          { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.15 : 0.03 },
+                          isSelected && { borderColor: colors.primary, backgroundColor: colors.primaryLight },
                         ]}
                       >
-                        {acc.name}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+                        <Ionicons
+                          name={icon}
+                          size={16}
+                          color={isSelected ? colors.primary : colors.textSecondary}
+                          style={{ marginRight: 6 }}
+                        />
+                        <ThemedText
+                          style={[styles.accountChipText, { color: colors.textSecondary }, isSelected && { color: colors.primary, fontWeight: '700' }]}
+                        >
+                          {acc.name}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    onPress={() => setShowAddAccountModal(true)}
+                    style={[
+                      styles.accountChip,
+                      { borderColor: colors.primary + '40', backgroundColor: colors.primaryLight },
+                    ]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="add" size={16} color={colors.primary} style={{ marginRight: 4 }} />
+                    <ThemedText style={[styles.accountChipText, { color: colors.primary, fontWeight: '700' }]}>
+                      + New Account
+                    </ThemedText>
+                  </TouchableOpacity>
+                </ScrollView>
+              )}
             </View>
 
             {/* Note / Description */}
             <View style={styles.section}>
-              <ThemedText variant="label" style={styles.sectionLabel}>
-                NOTE / REMARKS (OPTIONAL)
-              </ThemedText>
+              <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>NOTE (OPTIONAL)</ThemedText>
               <TextInput
                 value={note}
                 onChangeText={setNote}
                 placeholder="e.g. Dinner with family at Monal"
-                placeholderTextColor="#64748B"
-                style={styles.noteInput}
+                placeholderTextColor={colors.textTertiary}
+                style={[styles.noteInput, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, color: colors.text }]}
+                multiline
+                numberOfLines={2}
+                returnKeyType="done"
               />
             </View>
           </ScrollView>
 
-          {/* Bottom CTA Button */}
-          <View style={styles.footer}>
+          {/* Save Button — Simple & Text-Focused */}
+          <View style={[styles.footer, { borderTopColor: colors.borderSubtle, backgroundColor: colors.background }]}>
             <ThemedButton
               title="Save Transaction"
               variant="cta"
               size="lg"
               fullWidth
               onPress={handleSave}
+              disabled={isSaving}
+              loading={isSaving}
               style={[
                 styles.saveButton,
-                { backgroundColor: type === 'income' ? '#10B981' : '#10B981' },
+                { backgroundColor: type === 'income' ? colors.income : colors.expense },
               ]}
-              iconRight={<Ionicons name="checkmark-circle" size={20} color="#FFFFFF" />}
             />
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* Date Picker Modal */}
+      <DatePickerModal
+        visible={showDatePicker}
+        selected={selectedDate}
+        onConfirm={(date) => { setSelectedDate(date); setShowDatePicker(false); }}
+        onClose={() => setShowDatePicker(false)}
+      />
+
+      {/* Add Custom Category Modal */}
+      <AddCategoryModal
+        visible={showAddCategoryModal}
+        initialType={type}
+        onClose={() => setShowAddCategoryModal(false)}
+        onCategoryCreated={(newCat) => {
+          void loadCategories(type, newCat.id);
+        }}
+      />
+
+      {/* Add Custom Account Modal */}
+      <AddAccountModal
+        visible={showAddAccountModal}
+        onClose={() => setShowAddAccountModal(false)}
+        onAccountCreated={(newAcc) => {
+          setSelectedAccountId(newAcc.id);
+        }}
+      />
+
+      {/* Custom Alert */}
+      {alertConfig && (
+        <CustomAlert
+          visible={alertConfig.visible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          buttons={alertConfig.buttons}
+          onClose={() => setAlertConfig(null)}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0B0F17',
-  },
-  safeArea: {
-    flex: 1,
-  },
-  keyboardView: {
-    flex: 1,
-  },
+  container: { flex: 1 },
+  safeArea: { flex: 1 },
+  keyboardView: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -302,15 +592,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
   },
   closeButton: {
-    width: 40,
-    height: 40,
+    width: 40, height: 40,
     borderRadius: Radius.full,
-    backgroundColor: '#1E293B',
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
@@ -319,127 +605,128 @@ const styles = StyleSheet.create({
   },
   toggleContainer: {
     flexDirection: 'row',
-    backgroundColor: '#151D2A',
     borderRadius: Radius.xl,
     padding: 4,
     marginBottom: Spacing.lg,
     borderWidth: 1,
-    borderColor: '#222F45',
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 3,
+    elevation: 1,
   },
   togglePill: {
     flex: 1,
+    flexDirection: 'row',
     paddingVertical: Spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: Radius.lg,
   },
-  toggleText: {
-    color: '#94A3B8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  toggleText: { fontSize: 14, fontWeight: '600' },
   amountCard: {
-    backgroundColor: '#151D2A',
     borderRadius: Radius.xl,
     padding: Spacing.lg,
     borderWidth: 1,
-    borderColor: '#222F45',
     marginBottom: Spacing.xl,
     alignItems: 'center',
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 6,
+    elevation: 2,
   },
-  amountInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  currencyPrefix: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#10B981',
-    marginRight: Spacing.sm,
-  },
+  amountLabel: { marginBottom: 4, fontSize: 11, fontWeight: '700', letterSpacing: 0.6 },
+  amountInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  currencyPrefix: { fontSize: 22, fontWeight: '800', marginRight: Spacing.sm },
   amountInput: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    minWidth: 120,
-    textAlign: 'left',
-    padding: 0,
+    fontSize: 38, fontWeight: '800',
+    minWidth: 120, textAlign: 'left', padding: 0,
   },
-  section: {
-    marginBottom: Spacing.xl,
-  },
-  sectionLabel: {
-    color: '#94A3B8',
-    marginBottom: Spacing.sm,
-    letterSpacing: 0.6,
-  },
-  categoryGrid: {
+  section: { marginBottom: Spacing.xl },
+  sectionHeaderRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
   },
+  sectionLabel: { letterSpacing: 0.6, fontSize: 11, fontWeight: '700' },
+  addInlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.sm + 2,
+    paddingVertical: 3,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    gap: 4,
+  },
+  addInlineText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: Radius.lg,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderWidth: 1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  dateText: { fontSize: 14, fontWeight: '600' },
+  loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: Spacing.md },
+  loadingText: { fontSize: 13 },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
   categoryItem: {
-    width: '23%',
-    backgroundColor: '#151D2A',
+    width: '22.5%',
     borderRadius: Radius.lg,
     paddingVertical: Spacing.sm,
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#222F45',
+    borderWidth: 1.5,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  addCategoryCard: {
+    borderStyle: 'dashed',
   },
   categoryIconCircle: {
-    width: 38,
-    height: 38,
+    width: 38, height: 38,
     borderRadius: Radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center',
     marginBottom: 4,
   },
-  categoryName: {
-    fontSize: 10,
-    color: '#94A3B8',
-    textAlign: 'center',
-  },
-  accountRow: {
-    flexDirection: 'row',
-  },
+  categoryName: { fontSize: 10, textAlign: 'center' },
+  accountRow: { flexDirection: 'row' },
   accountChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#151D2A',
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderRadius: Radius.full,
     borderWidth: 1,
-    borderColor: '#222F45',
     marginRight: Spacing.sm,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 2,
+    elevation: 1,
   },
-  accountChipText: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontWeight: '500',
-  },
+  accountChipText: { fontSize: 12, fontWeight: '500' },
   noteInput: {
-    backgroundColor: '#151D2A',
     borderRadius: Radius.lg,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     borderWidth: 1,
-    borderColor: '#222F45',
-    color: '#FFFFFF',
     fontSize: 14,
+    textAlignVertical: 'top',
+    minHeight: 72,
+    shadowOffset: { width: 0, height: 1 },
+    shadowRadius: 3,
+    elevation: 1,
   },
   footer: {
     paddingHorizontal: Spacing.xl,
     paddingVertical: Spacing.base,
     borderTopWidth: 1,
-    borderTopColor: '#1E293B',
-    backgroundColor: '#0B0F17',
   },
-  saveButton: {
-    borderRadius: Radius.xl,
-  },
+  saveButton: { borderRadius: Radius.xl },
 });
