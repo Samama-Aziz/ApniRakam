@@ -1,10 +1,12 @@
+import { useAppStore } from '@/store/useAppStore';
+
 /**
  * Utility functions for formatting currencies, numbers, and dates in ApniRakam.
  */
 
 export interface CurrencyFormatOptions {
-  currency?: string; // Default: 'PKR'
-  symbol?: string;   // Default: 'PKR' or 'Rs.'
+  currency?: string;
+  symbol?: string;
   showDecimals?: boolean;
   sign?: boolean;
 }
@@ -13,7 +15,8 @@ export function formatCurrency(
   amount: number | null | undefined,
   options: CurrencyFormatOptions = {}
 ): string {
-  const { symbol = 'PKR', showDecimals = false, sign = false } = options;
+  const activeSymbol = useAppStore.getState?.()?.currencySymbol || useAppStore.getState?.()?.currency || 'PKR';
+  const { symbol = activeSymbol, showDecimals = false, sign = false } = options;
   const num = typeof amount === 'number' && !isNaN(amount) ? amount : 0;
 
   const formattedNum = new Intl.NumberFormat('en-PK', {
@@ -22,10 +25,10 @@ export function formatCurrency(
   }).format(Math.abs(num));
 
   if (num < 0) {
-    return `-${symbol} ${formattedNum}`;
+    return `${symbol} -${formattedNum}`;
   }
   if (sign && num > 0) {
-    return `+${symbol} ${formattedNum}`;
+    return `${symbol} +${formattedNum}`;
   }
   return `${symbol} ${formattedNum}`;
 }

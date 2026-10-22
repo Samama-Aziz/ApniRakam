@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
-import { Platform, View, ActivityIndicator } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
+import * as SystemUI from 'expo-system-ui';
 import { useTheme } from '@/hooks/useTheme';
 import { useAppStore } from '@/store/useAppStore';
 
@@ -35,6 +36,14 @@ export default function RootLayout() {
     void prepareApp();
     return () => { mounted = false; };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') {
+      try {
+        SystemUI.setBackgroundColorAsync(colors.background).catch(() => {});
+      } catch {}
+    }
+  }, [colors.background]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>

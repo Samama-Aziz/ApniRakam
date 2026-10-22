@@ -40,6 +40,7 @@ export function ThemedText({
         align ? { textAlign: align } : undefined,
         style,
       ]}
+      maxFontSizeMultiplier={rest.maxFontSizeMultiplier ?? 1.3}
       {...rest}
     >
       {children}

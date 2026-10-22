@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -17,6 +17,7 @@ import ThemedText from '@/components/common/ThemedText';
 import ThemedButton from '@/components/common/ThemedButton';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
+import { useKeyboard } from '@/hooks/useKeyboard';
 import { transactionRepository, categoryRepository } from '@/database';
 import { formatDate } from '@/utils/formatters';
 import { getCategoryMeta, getCategoryDisplayName } from '@/utils/categoryMeta';
@@ -25,6 +26,8 @@ import { AddAccountModal } from './AddAccountModal';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
 import type { TransactionRecord, CategoryRecord, AccountRecord } from '@/database/repositories/types';
 
+import { DatePickerModal } from './DatePickerModal';
+
 const ACCOUNT_ICON_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   cash: 'wallet-outline',
   bank: 'business-outline',
@@ -32,164 +35,6 @@ const ACCOUNT_ICON_MAP: Record<string, keyof typeof Ionicons.glyphMap> = {
   savings: 'save-outline',
   credit: 'card-outline',
 };
-
-// ─── Inline Date Picker Modal ───────────────────────────────────────────────
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-interface DatePickerModalProps {
-  visible: boolean;
-  selected: Date;
-  onConfirm: (date: Date) => void;
-  onClose: () => void;
-}
-
-function DatePickerModal({ visible, selected, onConfirm, onClose }: DatePickerModalProps) {
-  const { colors, isDark } = useTheme();
-  const [day, setDay] = useState(selected.getDate());
-  const [month, setMonth] = useState(selected.getMonth());
-  const [year, setYear] = useState(selected.getFullYear());
-
-  useEffect(() => {
-    if (visible) {
-      setDay(selected.getDate());
-      setMonth(selected.getMonth());
-      setYear(selected.getFullYear());
-    }
-  }, [visible, selected]);
-
-  const currentYear = new Date().getFullYear();
-  const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
-  const handleConfirm = () => {
-    const safeDay = Math.min(day, daysInMonth);
-    onConfirm(new Date(year, month, safeDay));
-  };
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={dp.overlay}>
-        <View
-          style={[
-            dp.sheet,
-            {
-              backgroundColor: colors.surface,
-              borderColor: colors.borderSubtle,
-              shadowColor: colors.cardShadow,
-              shadowOffset: { width: 0, height: -4 },
-              shadowOpacity: isDark ? 0.35 : 0.08,
-              shadowRadius: 16,
-              elevation: 16,
-            },
-          ]}
-        >
-          <View style={dp.header}>
-            <ThemedText style={[dp.title, { color: colors.text }]}>Select Date</ThemedText>
-            <TouchableOpacity onPress={onClose}>
-              <Ionicons name="close" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={dp.row}>
-            {/* Day */}
-            <View style={dp.column}>
-              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>DAY</ThemedText>
-              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
-                {days.map((d) => {
-                  const isCurrent = day === d;
-                  return (
-                    <TouchableOpacity
-                      key={d}
-                      onPress={() => setDay(d)}
-                      style={[
-                        dp.item,
-                        isCurrent && { backgroundColor: colors.primary },
-                      ]}
-                    >
-                      <ThemedText
-                        style={[
-                          dp.itemText,
-                          { color: colors.textSecondary },
-                          isCurrent && dp.itemTextActive,
-                        ]}
-                      >
-                        {String(d).padStart(2, '0')}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Month */}
-            <View style={dp.column}>
-              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>MONTH</ThemedText>
-              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
-                {MONTHS.map((m, i) => {
-                  const isCurrent = month === i;
-                  return (
-                    <TouchableOpacity
-                      key={m}
-                      onPress={() => setMonth(i)}
-                      style={[
-                        dp.item,
-                        isCurrent && { backgroundColor: colors.primary },
-                      ]}
-                    >
-                      <ThemedText
-                        style={[
-                          dp.itemText,
-                          { color: colors.textSecondary },
-                          isCurrent && dp.itemTextActive,
-                        ]}
-                      >
-                        {m}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Year */}
-            <View style={dp.column}>
-              <ThemedText style={[dp.colLabel, { color: colors.textSecondary }]}>YEAR</ThemedText>
-              <ScrollView style={dp.scroll} showsVerticalScrollIndicator={false}>
-                {years.map((y) => {
-                  const isCurrent = year === y;
-                  return (
-                    <TouchableOpacity
-                      key={y}
-                      onPress={() => setYear(y)}
-                      style={[
-                        dp.item,
-                        isCurrent && { backgroundColor: colors.primary },
-                      ]}
-                    >
-                      <ThemedText
-                        style={[
-                          dp.itemText,
-                          { color: colors.textSecondary },
-                          isCurrent && dp.itemTextActive,
-                        ]}
-                      >
-                        {y}
-                      </ThemedText>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </View>
-
-          <ThemedButton title="Confirm Date" variant="primary" fullWidth onPress={handleConfirm} />
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 // ─── Edit Transaction Modal ─────────────────────────────────────────────────
 
@@ -209,13 +54,33 @@ export function EditTransactionModal({
   onDeleted,
 }: EditTransactionModalProps) {
   const { colors, isDark } = useTheme();
-  const { accounts, updateTransactionInStore, removeTransactionFromStore, loadAppData } = useAppStore();
+  const { accounts, updateTransactionInStore, removeTransactionFromStore, loadAppData, currencySymbol, currency } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
+  const scrollRef = useRef<ScrollView>(null);
 
-  const [type, setType] = useState<'expense' | 'income'>('expense');
+  const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [amount, setAmount] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState('');
+  const [selectedToAccountId, setSelectedToAccountId] = useState('');
   const [note, setNote] = useState('');
+  const [isNotesFocused, setIsNotesFocused] = useState(false);
+
+  useEffect(() => {
+    if (isKeyboardVisible && isNotesFocused) {
+      const t1 = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      const t2 = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 280);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isKeyboardVisible, isNotesFocused]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
 
@@ -243,8 +108,9 @@ export function EditTransactionModal({
     if (transaction && visible) {
       setType(transaction.type);
       setAmount(String(transaction.amount));
-      setSelectedCategoryId(transaction.category_id);
+      setSelectedCategoryId(transaction.category_id || '');
       setSelectedAccountId(transaction.account_id);
+      setSelectedToAccountId(transaction.to_account_id || '');
       setNote(transaction.note || '');
       setSelectedDate(new Date(transaction.date));
     }
@@ -275,7 +141,7 @@ export function EditTransactionModal({
   }, []);
 
   useEffect(() => {
-    if (visible) {
+    if (visible && (type === 'expense' || type === 'income')) {
       void loadCategories(type, selectedCategoryId);
     }
   }, [visible, type, loadCategories]);
@@ -298,20 +164,41 @@ export function EditTransactionModal({
       });
       return;
     }
-    if (!selectedCategoryId) {
-      setAlertConfig({
-        visible: true,
-        title: 'Category Required',
-        message: 'Please select a category for this transaction.',
-        buttons: [{ text: 'OK' }],
-      });
-      return;
-    }
+
     if (!selectedAccountId) {
       setAlertConfig({
         visible: true,
         title: 'Account Required',
         message: 'Please select an account.',
+        buttons: [{ text: 'OK' }],
+      });
+      return;
+    }
+
+    if (type === 'transfer') {
+      if (!selectedToAccountId) {
+        setAlertConfig({
+          visible: true,
+          title: 'Destination Account Required',
+          message: 'Please select the destination account.',
+          buttons: [{ text: 'OK' }],
+        });
+        return;
+      }
+      if (selectedAccountId === selectedToAccountId) {
+        setAlertConfig({
+          visible: true,
+          title: 'Invalid Transfer',
+          message: 'Source and destination accounts must be different.',
+          buttons: [{ text: 'OK' }],
+        });
+        return;
+      }
+    } else if (!selectedCategoryId) {
+      setAlertConfig({
+        visible: true,
+        title: 'Category Required',
+        message: 'Please select a category for this transaction.',
         buttons: [{ text: 'OK' }],
       });
       return;
@@ -323,7 +210,8 @@ export function EditTransactionModal({
         type,
         amount: numAmount,
         account_id: selectedAccountId,
-        category_id: selectedCategoryId,
+        to_account_id: type === 'transfer' ? selectedToAccountId : null,
+        category_id: type === 'transfer' ? null : selectedCategoryId,
         date: selectedDate.toISOString(),
         note: note.trim() || null,
       });
@@ -355,7 +243,7 @@ export function EditTransactionModal({
     setAlertConfig({
       visible: true,
       title: 'Delete Transaction',
-      message: `Are you sure you want to delete this ${transaction.type} transaction of PKR ${transaction.amount.toLocaleString()}? This action cannot be undone.`,
+      message: `Are you sure you want to delete this ${transaction.type} transaction of ${sym} ${transaction.amount.toLocaleString()}? This action cannot be undone.`,
       type: 'destructive',
       buttons: [
         { text: 'Cancel', style: 'cancel' },
@@ -402,10 +290,11 @@ export function EditTransactionModal({
 
   return (
     <>
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Modal visible={visible} transparent statusBarTranslucent={true} animationType="slide" onRequestClose={onClose}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.overlay}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+          style={[styles.overlay, Platform.OS === 'android' && keyboardHeight > 0 && { paddingBottom: keyboardHeight }]}
         >
           <View
             style={[
@@ -425,10 +314,10 @@ export function EditTransactionModal({
             <View style={[styles.header, { borderBottomColor: colors.borderSubtle }]}>
               <View>
                 <ThemedText variant="title3" style={[styles.title, { color: colors.text }]}>
-                  Edit Transaction
+                  {type === 'transfer' ? 'Edit Transfer' : 'Edit Transaction'}
                 </ThemedText>
                 <ThemedText style={[styles.subtitle, { color: colors.textSecondary }]}>
-                  Modify amount, category, account or note
+                  {type === 'transfer' ? 'Modify transfer amount, accounts, date or note' : 'Modify amount, category, account or note'}
                 </ThemedText>
               </View>
               <TouchableOpacity
@@ -442,64 +331,93 @@ export function EditTransactionModal({
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+            <ScrollView
+              ref={scrollRef}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.scrollContent,
+                isKeyboardVisible && { paddingBottom: 220 },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            >
               {/* Type Switcher */}
-              <View
-                style={[
-                  styles.toggleContainer,
-                  {
-                    backgroundColor: isDark ? colors.surfaceElevated : colors.backgroundSecondary,
-                    borderColor: colors.borderSubtle,
-                  },
-                ]}
-              >
-                <TouchableOpacity
-                  onPress={() => handleTypeSwitch('expense')}
+              {type === 'transfer' ? (
+                <View
                   style={[
-                    styles.togglePill,
-                    type === 'expense' && { backgroundColor: colors.expense },
+                    styles.toggleContainer,
+                    {
+                      backgroundColor: isDark ? colors.surfaceElevated : colors.backgroundSecondary,
+                      borderColor: '#0EA5E9' + '40',
+                    },
                   ]}
                 >
-                  <Ionicons
-                    name="arrow-up"
-                    size={14}
-                    color={type === 'expense' ? '#FFFFFF' : colors.textSecondary}
-                    style={{ marginRight: 4 }}
-                  />
-                  <ThemedText
-                    style={[
-                      styles.toggleText,
-                      { color: colors.textSecondary },
-                      type === 'expense' && { color: '#FFFFFF', fontWeight: '700' },
-                    ]}
-                  >
-                    Expense
-                  </ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => handleTypeSwitch('income')}
+                  <View style={[styles.togglePill, { backgroundColor: '#0EA5E9' }]}>
+                    <Ionicons name="swap-horizontal" size={14} color="#FFFFFF" style={{ marginRight: 4 }} />
+                    <ThemedText style={[styles.toggleText, { color: '#FFFFFF', fontWeight: '700' }]}>
+                      Transfer / ATM Withdrawal
+                    </ThemedText>
+                  </View>
+                </View>
+              ) : (
+                <View
                   style={[
-                    styles.togglePill,
-                    type === 'income' && { backgroundColor: colors.income },
+                    styles.toggleContainer,
+                    {
+                      backgroundColor: isDark ? colors.surfaceElevated : colors.backgroundSecondary,
+                      borderColor: colors.borderSubtle,
+                    },
                   ]}
                 >
-                  <Ionicons
-                    name="arrow-down"
-                    size={14}
-                    color={type === 'income' ? '#FFFFFF' : colors.textSecondary}
-                    style={{ marginRight: 4 }}
-                  />
-                  <ThemedText
+                  <TouchableOpacity
+                    onPress={() => handleTypeSwitch('expense')}
                     style={[
-                      styles.toggleText,
-                      { color: colors.textSecondary },
-                      type === 'income' && { color: '#FFFFFF', fontWeight: '700' },
+                      styles.togglePill,
+                      type === 'expense' && { backgroundColor: colors.expense },
                     ]}
                   >
-                    Income
-                  </ThemedText>
-                </TouchableOpacity>
-              </View>
+                    <Ionicons
+                      name="arrow-up"
+                      size={14}
+                      color={type === 'expense' ? '#FFFFFF' : colors.textSecondary}
+                      style={{ marginRight: 4 }}
+                    />
+                    <ThemedText
+                      style={[
+                        styles.toggleText,
+                        { color: colors.textSecondary },
+                        type === 'expense' && { color: '#FFFFFF', fontWeight: '700' },
+                      ]}
+                    >
+                      Expense
+                    </ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => handleTypeSwitch('income')}
+                    style={[
+                      styles.togglePill,
+                      type === 'income' && { backgroundColor: colors.income },
+                    ]}
+                  >
+                    <Ionicons
+                      name="arrow-down"
+                      size={14}
+                      color={type === 'income' ? '#FFFFFF' : colors.textSecondary}
+                      style={{ marginRight: 4 }}
+                    />
+                    <ThemedText
+                      style={[
+                        styles.toggleText,
+                        { color: colors.textSecondary },
+                        type === 'income' && { color: '#FFFFFF', fontWeight: '700' },
+                      ]}
+                    >
+                      Income
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {/* Amount Input */}
               <View
@@ -523,10 +441,10 @@ export function EditTransactionModal({
                   <ThemedText
                     style={[
                       styles.currencyPrefix,
-                      { color: type === 'income' ? colors.income : colors.expense },
+                      { color: type === 'transfer' ? '#0EA5E9' : type === 'income' ? colors.income : colors.expense },
                     ]}
                   >
-                    PKR
+                    {sym}
                   </ThemedText>
                   <TextInput
                     value={amount}
@@ -562,58 +480,227 @@ export function EditTransactionModal({
                 </TouchableOpacity>
               </View>
 
-              {/* Category Selector */}
-              <View style={styles.section}>
-                <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                  CATEGORY
-                </ThemedText>
+              {/* Category Selector (Expense & Income only) */}
+              {(type === 'expense' || type === 'income') && (
+                <View style={styles.section}>
+                  <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                    CATEGORY
+                  </ThemedText>
 
-                {isLoadingCategories ? (
-                  <ActivityIndicator color={colors.primary} size="small" style={{ marginVertical: 12 }} />
-                ) : (
-                  <View style={styles.categoryGrid}>
-                    {categories.map((cat) => {
-                      const isSelected = selectedCategoryId === cat.id;
-                      const meta = getCategoryMeta(cat.name, categories);
+                  {isLoadingCategories ? (
+                    <ActivityIndicator color={colors.primary} size="small" style={{ marginVertical: 12 }} />
+                  ) : (
+                    <View style={styles.categoryGrid}>
+                      {categories.map((cat) => {
+                        const isSelected = selectedCategoryId === cat.id;
+                        const meta = getCategoryMeta(cat.id, categories);
+                        return (
+                          <TouchableOpacity
+                            key={cat.id}
+                            onPress={() => setSelectedCategoryId(cat.id)}
+                            style={[
+                              styles.categoryItem,
+                              {
+                                backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
+                                borderColor: isSelected ? meta.color : colors.borderSubtle,
+                              },
+                              isSelected && {
+                                borderWidth: 1.5,
+                                backgroundColor: meta.color + (isDark ? '25' : '15'),
+                              },
+                            ]}
+                          >
+                            <View style={[styles.categoryIconCircle, { backgroundColor: meta.color + '25' }]}>
+                              <Ionicons name={meta.icon} size={20} color={meta.color} />
+                            </View>
+                            <ThemedText
+                              style={[
+                                styles.categoryName,
+                                { color: colors.textSecondary },
+                                isSelected && { color: colors.text, fontWeight: '700' },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {cat.name}
+                            </ThemedText>
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                      {/* Clean inline "+ New" category option */}
+                      <TouchableOpacity
+                        onPress={() => setShowAddCategoryModal(true)}
+                        style={[
+                          styles.categoryItem,
+                          styles.addCategoryItem,
+                          {
+                            borderColor: isDark ? colors.borderSubtle : '#CBD5E1',
+                            borderStyle: 'dashed',
+                            backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#F8FAFC',
+                          },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.categoryIconCircle,
+                            { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0' },
+                          ]}
+                        >
+                          <Ionicons name="add" size={20} color={colors.textSecondary} />
+                        </View>
+                        <ThemedText style={[styles.categoryName, { color: colors.textSecondary }]} numberOfLines={1}>
+                          + New
+                        </ThemedText>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Account Selector (From & To for Transfer, single account for others) */}
+              {type === 'transfer' ? (
+                <>
+                  <View style={styles.section}>
+                    <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                      FROM ACCOUNT (DEBITED)
+                    </ThemedText>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
+                      {accounts.map((acc: AccountRecord) => {
+                        const isSelected = selectedAccountId === acc.id;
+                        const icon = ACCOUNT_ICON_MAP[acc.type] ?? 'wallet-outline';
+                        return (
+                          <TouchableOpacity
+                            key={acc.id}
+                            onPress={() => setSelectedAccountId(acc.id)}
+                            style={[
+                              styles.accountChip,
+                              {
+                                backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
+                                borderColor: isSelected ? '#EF4444' : colors.borderSubtle,
+                              },
+                              isSelected && {
+                                backgroundColor: isDark ? 'rgba(239, 68, 68, 0.18)' : '#FEE2E2',
+                                borderWidth: 1.5,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name={icon}
+                              size={16}
+                              color={isSelected ? '#EF4444' : colors.textSecondary}
+                              style={{ marginRight: 6 }}
+                            />
+                            <ThemedText
+                              style={[
+                                styles.accountChipText,
+                                { color: colors.textSecondary },
+                                isSelected && { color: '#EF4444', fontWeight: '700' },
+                              ]}
+                            >
+                              {acc.name}
+                            </ThemedText>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+
+                  <View style={styles.section}>
+                    <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                      TO ACCOUNT (CREDITED)
+                    </ThemedText>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
+                      {accounts.map((acc: AccountRecord) => {
+                        const isSelected = selectedToAccountId === acc.id;
+                        const icon = ACCOUNT_ICON_MAP[acc.type] ?? 'wallet-outline';
+                        return (
+                          <TouchableOpacity
+                            key={acc.id}
+                            onPress={() => setSelectedToAccountId(acc.id)}
+                            style={[
+                              styles.accountChip,
+                              {
+                                backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
+                                borderColor: isSelected ? '#10B981' : colors.borderSubtle,
+                              },
+                              isSelected && {
+                                backgroundColor: isDark ? 'rgba(16, 185, 129, 0.18)' : '#D1FAE5',
+                                borderWidth: 1.5,
+                              },
+                            ]}
+                          >
+                            <Ionicons
+                              name={icon}
+                              size={16}
+                              color={isSelected ? '#10B981' : colors.textSecondary}
+                              style={{ marginRight: 6 }}
+                            />
+                            <ThemedText
+                              style={[
+                                styles.accountChipText,
+                                { color: colors.textSecondary },
+                                isSelected && { color: '#10B981', fontWeight: '700' },
+                              ]}
+                            >
+                              {acc.name}
+                            </ThemedText>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.section}>
+                  <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                    ACCOUNT
+                  </ThemedText>
+
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
+                    {accounts.map((acc: AccountRecord) => {
+                      const isSelected = selectedAccountId === acc.id;
+                      const icon = ACCOUNT_ICON_MAP[acc.type] ?? 'wallet-outline';
                       return (
                         <TouchableOpacity
-                          key={cat.id}
-                          onPress={() => setSelectedCategoryId(cat.id)}
+                          key={acc.id}
+                          onPress={() => setSelectedAccountId(acc.id)}
                           style={[
-                            styles.categoryItem,
+                            styles.accountChip,
                             {
                               backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
-                              borderColor: isSelected ? meta.color : colors.borderSubtle,
+                              borderColor: isSelected ? colors.primary : colors.borderSubtle,
                             },
                             isSelected && {
+                              backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : colors.primaryLight,
                               borderWidth: 1.5,
-                              backgroundColor: meta.color + (isDark ? '25' : '15'),
                             },
                           ]}
                         >
-                          <View style={[styles.categoryIconCircle, { backgroundColor: meta.color + '25' }]}>
-                            <Ionicons name={meta.icon} size={20} color={meta.color} />
-                          </View>
+                          <Ionicons
+                            name={icon}
+                            size={16}
+                            color={isSelected ? colors.primary : colors.textSecondary}
+                            style={{ marginRight: 6 }}
+                          />
                           <ThemedText
                             style={[
-                              styles.categoryName,
+                              styles.accountChipText,
                               { color: colors.textSecondary },
                               isSelected && { color: colors.text, fontWeight: '700' },
                             ]}
-                            numberOfLines={1}
                           >
-                            {cat.name}
+                            {acc.name}
                           </ThemedText>
                         </TouchableOpacity>
                       );
                     })}
 
-                    {/* Clean inline "+ New" category option */}
+                    {/* Clean inline "+ New Account" chip */}
                     <TouchableOpacity
-                      onPress={() => setShowAddCategoryModal(true)}
+                      onPress={() => setShowAddAccountModal(true)}
                       style={[
-                        styles.categoryItem,
-                        styles.addCategoryItem,
+                        styles.accountChip,
+                        styles.addAccountChip,
                         {
                           borderColor: isDark ? colors.borderSubtle : '#CBD5E1',
                           borderStyle: 'dashed',
@@ -621,96 +708,33 @@ export function EditTransactionModal({
                         },
                       ]}
                     >
-                      <View
-                        style={[
-                          styles.categoryIconCircle,
-                          { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0' },
-                        ]}
-                      >
-                        <Ionicons name="add" size={20} color={colors.textSecondary} />
-                      </View>
-                      <ThemedText style={[styles.categoryName, { color: colors.textSecondary }]} numberOfLines={1}>
-                        + New
+                      <Ionicons name="add" size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                      <ThemedText style={[styles.accountChipText, { color: colors.textSecondary }]}>
+                        New Account
                       </ThemedText>
                     </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-
-              {/* Account Selector */}
-              <View style={styles.section}>
-                <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                  ACCOUNT
-                </ThemedText>
-
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountRow}>
-                  {accounts.map((acc: AccountRecord) => {
-                    const isSelected = selectedAccountId === acc.id;
-                    const icon = ACCOUNT_ICON_MAP[acc.type] ?? 'wallet-outline';
-                    return (
-                      <TouchableOpacity
-                        key={acc.id}
-                        onPress={() => setSelectedAccountId(acc.id)}
-                        style={[
-                          styles.accountChip,
-                          {
-                            backgroundColor: isDark ? colors.surfaceElevated : colors.surface,
-                            borderColor: isSelected ? colors.primary : colors.borderSubtle,
-                          },
-                          isSelected && {
-                            backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : colors.primaryLight,
-                            borderWidth: 1.5,
-                          },
-                        ]}
-                      >
-                        <Ionicons
-                          name={icon}
-                          size={16}
-                          color={isSelected ? colors.primary : colors.textSecondary}
-                          style={{ marginRight: 6 }}
-                        />
-                        <ThemedText
-                          style={[
-                            styles.accountChipText,
-                            { color: colors.textSecondary },
-                            isSelected && { color: colors.text, fontWeight: '700' },
-                          ]}
-                        >
-                          {acc.name}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    );
-                  })}
-
-                  {/* Clean inline "+ New Account" chip */}
-                  <TouchableOpacity
-                    onPress={() => setShowAddAccountModal(true)}
-                    style={[
-                      styles.accountChip,
-                      styles.addAccountChip,
-                      {
-                        borderColor: isDark ? colors.borderSubtle : '#CBD5E1',
-                        borderStyle: 'dashed',
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#F8FAFC',
-                      },
-                    ]}
-                  >
-                    <Ionicons name="add" size={16} color={colors.textSecondary} style={{ marginRight: 6 }} />
-                    <ThemedText style={[styles.accountChipText, { color: colors.textSecondary }]}>
-                      New Account
-                    </ThemedText>
-                  </TouchableOpacity>
-                </ScrollView>
-              </View>
+                  </ScrollView>
+                </View>
+              )}
 
               {/* Note / Description */}
               <View style={styles.section}>
                 <ThemedText variant="label" style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                  NOTE
+                  NOTES (OPTIONAL)
                 </ThemedText>
                 <TextInput
                   value={note}
                   onChangeText={setNote}
+                  onFocus={() => {
+                    setIsNotesFocused(true);
+                    setTimeout(() => {
+                      scrollRef.current?.scrollToEnd({ animated: true });
+                    }, 120);
+                    setTimeout(() => {
+                      scrollRef.current?.scrollToEnd({ animated: true });
+                    }, 280);
+                  }}
+                  onBlur={() => setIsNotesFocused(false)}
                   placeholder="e.g. Dinner with family at Monal"
                   placeholderTextColor={colors.textTertiary}
                   style={[
@@ -783,10 +807,10 @@ export function EditTransactionModal({
       {/* Add Category Modal */}
       <AddCategoryModal
         visible={showAddCategoryModal}
-        initialType={type}
+        initialType={type === 'income' ? 'income' : 'expense'}
         onClose={() => setShowAddCategoryModal(false)}
         onCategoryCreated={(newCat) => {
-          void loadCategories(type, newCat.id);
+          void loadCategories(type === 'income' ? 'income' : 'expense', newCat.id);
         }}
       />
 
@@ -841,7 +865,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.xl,
     paddingTop: Spacing.lg,
-    paddingBottom: Spacing.lg,
+    paddingBottom: Spacing.base,
   },
   toggleContainer: {
     flexDirection: 'row',
@@ -880,9 +904,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: Spacing.sm,
   },
-  sectionLabel: { letterSpacing: 0.6, fontSize: 11, fontWeight: '700' },
+  sectionLabel: { letterSpacing: 0.6, fontSize: 11, fontWeight: '700', marginBottom: Spacing.sm },
   addInlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -967,62 +990,5 @@ const styles = StyleSheet.create({
   },
 });
 
-const dp = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: Spacing.xl,
-    paddingBottom: 36,
-    borderWidth: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.lg,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginBottom: Spacing.xl,
-  },
-  column: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  colLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    marginBottom: Spacing.sm,
-  },
-  scroll: {
-    height: 140,
-    width: '100%',
-  },
-  item: {
-    paddingVertical: 8,
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  itemActive: {},
-  itemText: {
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  itemTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-});
-
 export default EditTransactionModal;
+

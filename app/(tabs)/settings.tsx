@@ -7,6 +7,7 @@ import {
   StatusBar,
   TextInput,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,6 +18,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { SUPPORTED_CURRENCIES } from '@/services/currency';
 import { getCategoryMeta } from '@/utils/categoryMeta';
 import { restoreDefaults } from '@/database';
+import Constants from 'expo-constants';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
 
 const CURRENCY_LIST = Object.values(SUPPORTED_CURRENCIES);
@@ -83,6 +85,7 @@ function SettingRow({
 
 export default function SettingsScreen() {
   const { colors, isDark } = useTheme();
+  const appVersion = Constants.expoConfig?.version ?? '1.0.01';
 
   const {
     userName, currency, currencySymbol,
@@ -160,7 +163,12 @@ export default function SettingsScreen() {
     <View style={[styles.container, { backgroundColor: bg }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={bg} />
       <SafeAreaView style={styles.safeArea}>
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        >
 
           {/* ── Header ── */}
           <View style={styles.header}>
@@ -377,7 +385,7 @@ export default function SettingsScreen() {
           <View style={[styles.card, { backgroundColor: surface, borderColor: border, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.25 : 0.05 }]}>
             <SettingRow icon="shield-checkmark-outline" iconColor={colors.primary} label="Data Privacy" value="100% Offline" colors={colors} />
             <SettingRow icon="lock-closed-outline" iconColor="#6366F1" label="Storage" value="Local SQLite" colors={colors} />
-            <SettingRow icon="information-circle-outline" iconColor="#3B82F6" label="Version" value="1.0.0" colors={colors} last />
+            <SettingRow icon="information-circle-outline" iconColor="#3B82F6" label="Version" value={appVersion} colors={colors} last />
           </View>
 
           <View style={styles.bottomPad} />

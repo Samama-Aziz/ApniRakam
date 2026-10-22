@@ -36,7 +36,8 @@ export default function ReportsScreen() {
   const [activeTab, setActiveTab] = useState<'overview' | 'breakdown'>('overview');
   const [monthOffset, setMonthOffset] = useState(0);
   const [showSummaryAlert, setShowSummaryAlert] = useState(false);
-  const { transactions, categories } = useAppStore();
+  const { transactions, categories, currencySymbol, currency } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
   const { colors, isDark } = useTheme();
 
   const selectedDate = useMemo(() => {
@@ -59,7 +60,7 @@ export default function ReportsScreen() {
     let income = 0; let expense = 0;
     for (const tx of monthTxs) {
       if (tx.type === 'income') income += tx.amount;
-      else expense += tx.amount;
+      else if (tx.type === 'expense') expense += tx.amount;
     }
     return { income, expense };
   }, [monthTxs]);
@@ -81,7 +82,7 @@ export default function ReportsScreen() {
   const categoryBreakdown = useMemo(() => {
     const map: Record<string, number> = {};
     for (const tx of monthTxs) {
-      if (tx.type !== 'expense') continue;
+      if (tx.type !== 'expense' || !tx.category_id) continue;
       map[tx.category_id] = (map[tx.category_id] ?? 0) + tx.amount;
     }
     const total = Object.values(map).reduce((s, v) => s + v, 0);
@@ -167,17 +168,17 @@ export default function ReportsScreen() {
                 {/* Data-driven bar chart */}
                 <View style={styles.barChartRow}>
                   <View style={[styles.barColumn, { opacity: income === 0 ? 0.35 : 1 }]}>
-                    <ThemedText style={[styles.barAmount, { color: colors.text }]}>PKR {formatCompact(income)}</ThemedText>
+                    <ThemedText style={[styles.barAmount, { color: colors.text }]}>{sym} {formatCompact(income)}</ThemedText>
                     {/* Track is fixed height; fill grows from bottom */}
-                    <View style={[styles.barTrack, { height: BAR_TRACK_H, backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7' }]}>
+                    <View style={[styles.barTrack, { height: BAR_TRACK_H, backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted }]}>
                       <View style={[styles.barFill, { height: incomeBarH, backgroundColor: colors.income }]} />
                     </View>
                     <ThemedText style={[styles.barLabel, { color: colors.income }]}>Income</ThemedText>
                   </View>
 
                   <View style={[styles.barColumn, { opacity: expense === 0 ? 0.35 : 1 }]}>
-                    <ThemedText style={[styles.barAmount, { color: colors.text }]}>PKR {formatCompact(expense)}</ThemedText>
-                    <View style={[styles.barTrack, { height: BAR_TRACK_H, backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7' }]}>
+                    <ThemedText style={[styles.barAmount, { color: colors.text }]}>{sym} {formatCompact(expense)}</ThemedText>
+                    <View style={[styles.barTrack, { height: BAR_TRACK_H, backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted }]}>
                       <View style={[styles.barFill, { height: expenseBarH, backgroundColor: colors.expense }]} />
                     </View>
                     <ThemedText style={[styles.barLabel, { color: colors.expense }]}>Expense</ThemedText>
@@ -185,7 +186,7 @@ export default function ReportsScreen() {
                 </View>
 
                 {/* Status Bar / Progress Indicator calculated accurately from monthly cashflow */}
-                <View style={[styles.statusBarSection, { borderTopColor: colors.borderSubtle }]}>
+                <View style={[styles.statusBarSection, { borderTopColor: isDark ? colors.borderSubtle : colors.border }]}>
                   <View style={styles.statusBarHeaderRow}>
                     <ThemedText style={[styles.statusBarLabel, { color: colors.textSecondary }]}>
                       {netSavings >= 0 ? 'NET SAVINGS RATIO' : 'OVERSPENDING RATIO'}
@@ -194,7 +195,7 @@ export default function ReportsScreen() {
                       {hasIncome ? `${Math.abs(savingsRate)}%` : (expense > 0 ? '100%' : '0%')}
                     </ThemedText>
                   </View>
-                  <View style={[styles.statusBarTrack, { backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7' }]}>
+                  <View style={[styles.statusBarTrack, { backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted }]}>
                     <View
                       style={[
                         styles.statusBarFill,
@@ -208,11 +209,11 @@ export default function ReportsScreen() {
                 </View>
 
                 {/* Net Savings Box */}
-                <View style={[styles.savingsBox, { backgroundColor: isDark ? colors.backgroundSecondary : '#F8FAFC', borderColor: colors.borderSubtle }]}>
-                  <View>
+                <View style={[styles.savingsBox, { backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted, borderColor: isDark ? colors.borderSubtle : colors.border }]}>
+                  <View style={{ flex: 1, minWidth: 120 }}>
                     <ThemedText style={[styles.savingsLabel, { color: colors.textSecondary }]}>NET SAVINGS</ThemedText>
                     <ThemedText style={[styles.savingsValue, { color: netSavings >= 0 ? colors.income : colors.expense }]}>
-                      {netSavings >= 0 ? '+' : '-'}PKR {Math.abs(netSavings).toLocaleString()}
+                      {netSavings >= 0 ? `${sym} +${Math.abs(netSavings).toLocaleString()}` : `${sym} -${Math.abs(netSavings).toLocaleString()}`}
                     </ThemedText>
                   </View>
                   <View style={[styles.savingsBadge, { backgroundColor: netSavings >= 0 ? colors.incomeLight : colors.expenseLight, borderColor: netSavings >= 0 ? colors.income + '40' : colors.expense + '40' }]}>
@@ -269,7 +270,7 @@ export default function ReportsScreen() {
                           </View>
                           <View style={styles.categoryCardRight}>
                             <ThemedText style={[styles.categoryAmount, { color: colors.textSecondary }]}>
-                              {formatCurrency(cat.amount, { symbol: 'PKR' })}
+                              {formatCurrency(cat.amount, { symbol: sym })}
                             </ThemedText>
                             <ThemedText style={[styles.categoryBarPercentText, { color: meta.color }]}>
                               {cat.percent}%
@@ -301,7 +302,7 @@ export default function ReportsScreen() {
         visible={showSummaryAlert}
         type="info"
         title="Monthly Report Summary"
-        message={`Period: ${monthLabel(selectedDate)}\n\n• Income: PKR ${income.toLocaleString()}\n• Expenses: PKR ${expense.toLocaleString()}\n• Net Savings: PKR ${netSavings.toLocaleString()} (${savingsRate}%)\n• Total Transactions: ${monthTxs.length}`}
+        message={`Period: ${monthLabel(selectedDate)}\n\n• Income: ${sym} ${income.toLocaleString()}\n• Expenses: ${sym} ${expense.toLocaleString()}\n• Net Savings: ${sym} ${netSavings.toLocaleString()} (${savingsRate}%)\n• Total Transactions: ${monthTxs.length}`}
         buttons={[{ text: 'Close', style: 'default' }]}
         onClose={() => setShowSummaryAlert(false)}
       />

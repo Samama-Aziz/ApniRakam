@@ -83,6 +83,7 @@ export function CustomTabBar({ state, descriptors, navigation }: any) {
           />
         </View>
         <ThemedText
+          numberOfLines={1}
           style={[styles.tabLabel, { color, fontWeight: isFocused ? '700' : '500' }]}
         >
           {cfg.label}
@@ -104,7 +105,7 @@ export function CustomTabBar({ state, descriptors, navigation }: any) {
           shadowColor: colors.cardShadow,
           shadowOpacity: isDark ? 0.35 : 0.06,
           paddingBottom: bottomPadding,
-          height: 60 + bottomPadding,
+          minHeight: 60 + bottomPadding,
         },
       ]}
     >

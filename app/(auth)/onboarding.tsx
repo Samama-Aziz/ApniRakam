@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -23,24 +23,26 @@ import ApniRakamLogo from '@/components/logo/ApniRakamLogo';
 import { SUPPORTED_CURRENCIES } from '@/services/currency';
 import { accountRepository } from '@/database';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
+import { useKeyboard } from '@/hooks/useKeyboard';
 
 const CURRENCY_LIST = Object.values(SUPPORTED_CURRENCIES);
 
 const ACCOUNT_TYPES = [
-  { value: 'cash',   label: 'Cash',   icon: 'cash-outline' as const },
-  { value: 'bank',   label: 'Bank',   icon: 'business-outline' as const },
-  { value: 'wallet', label: 'Wallet', icon: 'wallet-outline' as const },
-  { value: 'credit', label: 'Credit', icon: 'card-outline' as const },
+  { value: 'cash',   label: 'Cash / Cash Wallet', icon: 'cash-outline' as const },
+  { value: 'bank',   label: 'Bank',               icon: 'business-outline' as const },
+  { value: 'wallet', label: 'Wallet',             icon: 'wallet-outline' as const },
+  { value: 'credit', label: 'Credit',             icon: 'card-outline' as const },
 ] as const;
 
 type AccountType = 'cash' | 'bank' | 'wallet' | 'credit';
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2 | 3 | 4;
 
 export default function OnboardingScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { setOnboarded, setUserName, setCurrency, setDefaultAccount, loadAppData } = useAppStore();
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
 
   const [step, setStep] = useState<Step>(1);
   const [isSaving, setIsSaving] = useState(false);
@@ -49,7 +51,7 @@ export default function OnboardingScreen() {
   const [name, setName] = useState('');
 
   // Step 2 – Account
-  const [accountName, setAccountName] = useState('');
+  const [accountName, setAccountName] = useState('Cash in Hand');
   const [accountType, setAccountType] = useState<AccountType>('cash');
   const [openingBalance, setOpeningBalance] = useState('');
 
@@ -79,8 +81,8 @@ export default function OnboardingScreen() {
   const goForward = () => animateToStep((step + 1) as Step, 'forward');
   const goBack    = () => animateToStep((step - 1) as Step, 'back');
 
-  const handleStep2Continue = () => {
-    if (!accountName.trim()) {
+  const handleStepAccountContinue = () => {
+    if (accountType !== 'cash' && !accountName.trim()) {
       setAlertConfig({
         visible: true,
         title: 'Account Name Required',
@@ -105,8 +107,9 @@ export default function OnboardingScreen() {
 
       // 3. Account
       const balance = parseFloat(openingBalance) || 0;
+      const finalAccountName = accountType === 'cash' ? (accountName.trim() || 'Cash in Hand') : (accountName.trim() || 'My Account');
       const account = await accountRepository.create({
-        name: accountName.trim() || 'My Account',
+        name: finalAccountName,
         type: accountType,
         currency: selectedCurrencyCode,
         opening_balance: balance,
@@ -153,9 +156,9 @@ export default function OnboardingScreen() {
             )}
           </View>
 
-          {/* Progress segments — 3 steps */}
+          {/* Progress segments — 4 steps */}
           <View style={styles.progressContainer}>
-            {[1, 2, 3].map((s) => (
+            {[1, 2, 3, 4].map((s) => (
               <View
                 key={s}
                 style={[
@@ -169,17 +172,20 @@ export default function OnboardingScreen() {
           {/* Animated step */}
           <Animated.View style={[styles.stepContent, { opacity, transform: [{ translateX }] }]}>
             {step === 1 && (
-              <StepName name={name} setName={setName} colors={colors} isDark={isDark} />
+              <StepOverview colors={colors} isDark={isDark} />
             )}
             {step === 2 && (
+              <StepName name={name} setName={setName} colors={colors} isDark={isDark} isKeyboardVisible={isKeyboardVisible} />
+            )}
+            {step === 3 && (
               <StepAccount
                 accountName={accountName} setAccountName={setAccountName}
                 accountType={accountType} setAccountType={setAccountType}
                 openingBalance={openingBalance} setOpeningBalance={setOpeningBalance}
-                colors={colors} isDark={isDark}
+                colors={colors} isDark={isDark} isKeyboardVisible={isKeyboardVisible}
               />
             )}
-            {step === 3 && (
+            {step === 4 && (
               <StepCurrency
                 selectedCurrencyCode={selectedCurrencyCode}
                 setSelectedCurrencyCode={setSelectedCurrencyCode}
@@ -190,19 +196,19 @@ export default function OnboardingScreen() {
 
           {/* Footer */}
           <View style={styles.footer}>
-            {step < 3 ? (
+            {step < 4 ? (
               <ThemedButton
-                title="Continue"
+                title={step === 1 ? 'Get Started' : 'Continue'}
                 variant="cta"
                 size="lg"
                 fullWidth
-                onPress={step === 1 ? goForward : handleStep2Continue}
+                onPress={step === 3 ? handleStepAccountContinue : goForward}
                 iconRight={<Ionicons name="arrow-forward" size={20} color="#FFFFFF" />}
                 style={styles.ctaButton}
               />
             ) : (
               <ThemedButton
-                title={isSaving ? 'Setting up…' : 'Get Started'}
+                title={isSaving ? 'Setting up…' : 'Start Using ApniRakam'}
                 variant="cta"
                 size="lg"
                 fullWidth
@@ -213,7 +219,7 @@ export default function OnboardingScreen() {
               />
             )}
             <ThemedText style={[styles.stepLabel, { color: colors.textTertiary }]}>
-              Step {step} of 3
+              Step {step} of 4
             </ThemedText>
           </View>
         </KeyboardAvoidingView>
@@ -232,13 +238,111 @@ export default function OnboardingScreen() {
   );
 }
 
-// ─── Step 1: Name ─────────────────────────────────────────────────────────────
+// ─── Step 1: Overview (What this app does) ───────────────────────────────────
 
-function StepName({ name, setName, colors, isDark }: {
-  name: string; setName: (v: string) => void; colors: any; isDark: boolean;
-}) {
+function StepOverview({ colors, isDark }: { colors: any; isDark: boolean }) {
+  const features = [
+    {
+      icon: 'pie-chart-outline' as const,
+      color: '#10B981',
+      title: 'Track Daily Expenses & Income',
+      desc: 'Log cash flow in seconds with smart categories, notes, and instant balance updates.',
+    },
+    {
+      icon: 'wallet-outline' as const,
+      color: '#0EA5E9',
+      title: 'All Wallets & Accounts Together',
+      desc: 'Manage bank accounts, mobile wallets (Easypaisa/JazzCash), and physical cash in one place.',
+    },
+    {
+      icon: 'people-outline' as const,
+      color: '#F59E0B',
+      title: 'Smart Loan & Udhaar Manager',
+      desc: 'Track money you lent or borrowed with due date reminders and partial payments.',
+    },
+    {
+      icon: 'shield-checkmark-outline' as const,
+      color: '#8B5CF6',
+      title: '100% Private & Fully Offline',
+      desc: 'Your financial data is stored securely on your phone. No signups, no ads, no tracking.',
+    },
+  ];
+
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      contentContainerStyle={styles.scrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.illustrationRing}>
+        <View style={styles.illustrationInner}>
+          <Ionicons name="sparkles" size={44} color="#10B981" />
+        </View>
+      </View>
+
+      <ThemedText variant="display" align="center" style={styles.mainTitle}>
+        Take Control of{'\n'}Your Money
+      </ThemedText>
+      <ThemedText variant="subtitle" color="textSecondary" align="center" style={styles.mainSubtitle}>
+        ApniRakam is your private companion to track spending, manage wallets, and organize debts effortlessly.
+      </ThemedText>
+
+      <View style={styles.featureList}>
+        {features.map((f, i) => (
+          <View
+            key={i}
+            style={[
+              styles.featureCard,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.borderSubtle,
+                shadowColor: colors.cardShadow,
+                shadowOpacity: isDark ? 0.25 : 0.04,
+              },
+            ]}
+          >
+            <View style={[styles.featureIconBox, { backgroundColor: f.color + '18' }]}>
+              <Ionicons name={f.icon} size={22} color={f.color} />
+            </View>
+            <View style={styles.featureTextBox}>
+              <ThemedText style={[styles.featureTitle, { color: colors.text }]}>
+                {f.title}
+              </ThemedText>
+              <ThemedText style={[styles.featureDesc, { color: colors.textSecondary }]}>
+                {f.desc}
+              </ThemedText>
+            </View>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+// ─── Step 2: Name ─────────────────────────────────────────────────────────────
+
+function StepName({ name, setName, colors, isDark, isKeyboardVisible }: {
+  name: string; setName: (v: string) => void; colors: any; isDark: boolean; isKeyboardVisible: boolean;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    if (isKeyboardVisible) {
+      setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 120);
+    }
+  }, [isKeyboardVisible]);
+
+  return (
+    <ScrollView
+      ref={scrollRef}
+      contentContainerStyle={[
+        styles.scrollContent,
+        isKeyboardVisible && { paddingBottom: 240 },
+      ]}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.illustrationRing}>
         <View style={styles.illustrationInner}>
           <Ionicons name="person" size={44} color="#10B981" />
@@ -260,25 +364,62 @@ function StepName({ name, setName, colors, isDark }: {
           onChangeText={setName}
           returnKeyType="done"
           maxLength={40}
+          onFocus={() => {
+            setTimeout(() => {
+              scrollRef.current?.scrollToEnd({ animated: true });
+            }, 120);
+          }}
         />
       </View>
     </ScrollView>
   );
 }
 
-// ─── Step 2: Account ──────────────────────────────────────────────────────────
+// ─── Step 3: Account ──────────────────────────────────────────────────────────
 
 function StepAccount({
   accountName, setAccountName, accountType, setAccountType,
-  openingBalance, setOpeningBalance, colors, isDark,
+  openingBalance, setOpeningBalance, colors, isDark, isKeyboardVisible,
 }: {
   accountName: string; setAccountName: (v: string) => void;
   accountType: AccountType; setAccountType: (v: AccountType) => void;
   openingBalance: string; setOpeningBalance: (v: string) => void;
-  colors: any; isDark: boolean;
+  colors: any; isDark: boolean; isKeyboardVisible: boolean;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
+  const [focusedField, setFocusedField] = useState<'name' | 'balance' | null>(null);
+
+  useEffect(() => {
+    if (isKeyboardVisible) {
+      setTimeout(() => {
+        if (focusedField === 'balance') {
+          scrollRef.current?.scrollToEnd({ animated: true });
+        } else if (focusedField === 'name') {
+          scrollRef.current?.scrollTo({ y: 220, animated: true });
+        }
+      }, 150);
+    }
+  }, [isKeyboardVisible, focusedField]);
+
+  const handleSelectType = (typeVal: AccountType) => {
+    setAccountType(typeVal);
+    if (typeVal === 'cash') {
+      setAccountName('Cash in Hand');
+    } else if (accountName === 'Cash in Hand') {
+      setAccountName('');
+    }
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      ref={scrollRef}
+      contentContainerStyle={[
+        styles.scrollContent,
+        isKeyboardVisible && { paddingBottom: 240 },
+      ]}
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.illustrationRing}>
         <View style={styles.illustrationInner}>
           <Ionicons name="wallet" size={44} color="#10B981" />
@@ -303,7 +444,7 @@ function StepAccount({
                 { backgroundColor: colors.surface, borderColor: isSelected ? colors.primary : colors.borderSubtle },
                 isSelected && { backgroundColor: isDark ? 'rgba(16,185,129,0.12)' : colors.primaryLight },
               ]}
-              onPress={() => setAccountType(t.value as AccountType)}
+              onPress={() => handleSelectType(t.value as AccountType)}
               activeOpacity={0.75}
             >
               <Ionicons name={t.icon} size={22} color={isSelected ? colors.primary : colors.textSecondary} />
@@ -315,19 +456,48 @@ function StepAccount({
         })}
       </View>
 
-      {/* Account Name */}
-      <View style={[styles.inputWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
-        <Ionicons name="create-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
-        <TextInput
-          style={[styles.textInput, { color: colors.text }]}
-          placeholder="Account name (e.g. Cash in Hand)"
-          placeholderTextColor={colors.textTertiary}
-          value={accountName}
-          onChangeText={setAccountName}
-          returnKeyType="next"
-          maxLength={40}
-        />
-      </View>
+      {/* Account Name - Auto-configured card for Cash in Hand, TextInput for other types */}
+      {accountType === 'cash' ? (
+        <View style={[styles.autoNamedCard, { backgroundColor: colors.surface, borderColor: isDark ? colors.borderSubtle : colors.primary + '35' }]}>
+          <View style={[styles.autoNamedIconCircle, { backgroundColor: isDark ? 'rgba(16,185,129,0.2)' : colors.primaryLight }]}>
+            <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <ThemedText style={[styles.autoNamedTitle, { color: colors.text }]}>
+              Account Name: Cash in Hand
+            </ThemedText>
+            <ThemedText style={[styles.autoNamedSub, { color: colors.textSecondary }]}>
+              Physical cash wallet configured automatically
+            </ThemedText>
+          </View>
+        </View>
+      ) : (
+        <View style={[styles.inputWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
+          <Ionicons name="create-outline" size={20} color={colors.textSecondary} style={styles.inputIcon} />
+          <TextInput
+            style={[styles.textInput, { color: colors.text }]}
+            placeholder={
+              accountType === 'bank'
+                ? 'Account name (e.g. Meezan Bank, HBL)'
+                : accountType === 'wallet'
+                ? 'Wallet name (e.g. Easypaisa, Sadapay)'
+                : 'Account name (e.g. Credit Card)'
+            }
+            placeholderTextColor={colors.textTertiary}
+            value={accountName === 'Cash in Hand' ? '' : accountName}
+            onChangeText={setAccountName}
+            returnKeyType="next"
+            maxLength={40}
+            onFocus={() => {
+              setFocusedField('name');
+              setTimeout(() => {
+                scrollRef.current?.scrollTo({ y: 220, animated: true });
+              }, 120);
+            }}
+            onBlur={() => setFocusedField(null)}
+          />
+        </View>
+      )}
 
       {/* Opening Balance */}
       <View style={[styles.inputWrapper, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, marginTop: Spacing.sm }]}>
@@ -341,13 +511,20 @@ function StepAccount({
           keyboardType="decimal-pad"
           returnKeyType="done"
           maxLength={15}
+          onFocus={() => {
+            setFocusedField('balance');
+            setTimeout(() => {
+              scrollRef.current?.scrollToEnd({ animated: true });
+            }, 120);
+          }}
+          onBlur={() => setFocusedField(null)}
         />
       </View>
     </ScrollView>
   );
 }
 
-// ─── Step 3: Currency ─────────────────────────────────────────────────────────
+// ─── Step 4: Currency ─────────────────────────────────────────────────────────
 
 function StepCurrency({ selectedCurrencyCode, setSelectedCurrencyCode, colors, isDark }: {
   selectedCurrencyCode: string; setSelectedCurrencyCode: (v: string) => void; colors: any; isDark: boolean;
@@ -467,11 +644,34 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     borderWidth: 1,
     paddingHorizontal: Spacing.base,
-    height: 56,
+    minHeight: 56,
+    paddingVertical: Spacing.xs,
     width: '100%',
   },
   inputIcon: { marginRight: Spacing.sm },
   textInput: { flex: 1, fontSize: 16, fontWeight: '500' },
+
+  autoNamedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: Radius.xl,
+    borderWidth: 1.5,
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
+    width: '100%',
+  },
+  autoNamedIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  autoNamedTitle: { fontSize: 15, fontWeight: '700' },
+  autoNamedSub: { fontSize: 12, marginTop: 2 },
+
+
 
   typeGrid: {
     flexDirection: 'row',
@@ -485,10 +685,13 @@ const styles = StyleSheet.create({
     borderRadius: Radius.lg,
     borderWidth: 1.5,
     paddingVertical: Spacing.md,
+    paddingHorizontal: 4,
+    minHeight: 70,
     alignItems: 'center',
+    justifyContent: 'center',
     gap: Spacing.xs,
   },
-  typeLabel: { fontSize: 11, fontWeight: '700' },
+  typeLabel: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
 
   currencyGrid: {
     flexDirection: 'row',
@@ -518,6 +721,42 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  featureList: {
+    width: '100%',
+    gap: Spacing.sm,
+    marginTop: Spacing.xs,
+  },
+  featureCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: Radius.xl,
+    borderWidth: 1,
+    gap: Spacing.md,
+    width: '100%',
+  },
+  featureIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  featureTextBox: {
+    flex: 1,
+    minWidth: 0,
+  },
+  featureTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  featureDesc: {
+    fontSize: 12,
+    lineHeight: 16,
   },
 
   footer: {

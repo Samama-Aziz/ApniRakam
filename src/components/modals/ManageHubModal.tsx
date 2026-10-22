@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -17,13 +17,15 @@ import ThemedText from '@/components/common/ThemedText';
 import ThemedButton from '@/components/common/ThemedButton';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
+import { useKeyboard } from '@/hooks/useKeyboard';
 import { accountRepository, categoryRepository } from '@/database';
 import { formatCurrency } from '@/utils/formatters';
 import { getCategoryMeta, ACCOUNT_TYPE_OPTIONS } from '@/utils/categoryMeta';
 import { AddAccountModal } from './AddAccountModal';
 import { AddCategoryModal } from './AddCategoryModal';
+import { EditCategoryModal } from './EditCategoryModal';
 import { CustomAlert, AlertButton } from '@/components/common/CustomAlert';
-import type { AccountRecord } from '@/database/repositories/types';
+import type { AccountRecord, CategoryRecord, LoanRecord } from '@/database/repositories/types';
 
 // ─── "Others always last" sort helper ─────────────────────────────────────────
 function sortCategoriesOthersLast<T extends { name: string }>(list: T[]): T[] {
@@ -52,11 +54,25 @@ interface EditAccountSheetProps {
 
 function EditAccountSheet({ visible, account, onClose, onSaved }: EditAccountSheetProps) {
   const { colors, isDark } = useTheme();
-  const { updateAccountInStore, loadAppData } = useAppStore();
+  const { updateAccountInStore, loadAppData, currencySymbol, currency } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
+  const scrollRef = useRef<ScrollView>(null);
   const [name, setName] = useState('');
   const [selectedType, setSelectedType] = useState<AccountRecord['type']>('bank');
   const [openingBalance, setOpeningBalance] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isBalanceFocused, setIsBalanceFocused] = useState(false);
+
+  React.useEffect(() => {
+    if (isKeyboardVisible && isBalanceFocused) {
+      const timer = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [isKeyboardVisible, isBalanceFocused]);
+
   const [alertConfig, setAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -112,10 +128,11 @@ function EditAccountSheet({ visible, account, onClose, onSaved }: EditAccountShe
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent statusBarTranslucent={true} animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={es.overlay}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+        style={[es.overlay, Platform.OS === 'android' && keyboardHeight > 0 && { paddingBottom: keyboardHeight }]}
       >
         <TouchableOpacity style={es.backdrop} activeOpacity={1} onPress={onClose} />
         <View
@@ -150,9 +167,12 @@ function EditAccountSheet({ visible, account, onClose, onSaved }: EditAccountShe
           </View>
 
           <ScrollView
+            ref={scrollRef}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={es.scrollContent}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             {/* Account Name */}
             <ThemedText style={[es.label, { color: colors.textSecondary }]}>ACCOUNT NAME</ThemedText>
@@ -170,6 +190,9 @@ function EditAccountSheet({ visible, account, onClose, onSaved }: EditAccountShe
                 },
               ]}
               autoFocus
+              onFocus={() => {
+                scrollRef.current?.scrollTo({ y: 0, animated: true });
+              }}
             />
 
             {/* Account Type */}
@@ -241,13 +264,20 @@ function EditAccountSheet({ visible, account, onClose, onSaved }: EditAccountShe
                 },
               ]}
             >
-              <ThemedText style={[es.currencyBadge, { color: colors.primary }]}>PKR</ThemedText>
+              <ThemedText style={[es.currencyBadge, { color: colors.primary }]}>{sym}</ThemedText>
               <TextInput
                 value={openingBalance}
                 onChangeText={setOpeningBalance}
                 placeholder="0"
                 placeholderTextColor={colors.textTertiary}
                 keyboardType="numeric"
+                onFocus={() => {
+                  setIsBalanceFocused(true);
+                  setTimeout(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
+                }}
+                onBlur={() => setIsBalanceFocused(false)}
                 style={[es.balanceInput, { color: colors.text }]}
               />
             </View>
@@ -297,10 +327,15 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
     accounts,
     categories,
     transactions,
+    loans,
+    loanRepayments,
     removeAccountFromStore,
     removeCategoryFromStore,
     loadAppData,
+    currencySymbol,
+    currency,
   } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
 
   const [activeTab, setActiveTab] = useState<'accounts' | 'categories'>(initialTab);
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -308,6 +343,8 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
   const [categoryTypeFilter, setCategoryTypeFilter] = useState<'all' | 'expense' | 'income'>('all');
   const [editingAccount, setEditingAccount] = useState<AccountRecord | null>(null);
   const [showEditAccount, setShowEditAccount] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<CategoryRecord | null>(null);
+  const [showEditCategory, setShowEditCategory] = useState(false);
 
   React.useEffect(() => {
     if (visible) {
@@ -323,16 +360,38 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
     });
 
     transactions.forEach((tx) => {
-      if (tx.deleted_at || !map[tx.account_id] !== undefined) return;
+      if (tx.deleted_at) return;
       if (tx.type === 'income') {
-        map[tx.account_id] = (map[tx.account_id] || 0) + tx.amount;
-      } else {
-        map[tx.account_id] = (map[tx.account_id] || 0) - tx.amount;
+        if (map[tx.account_id] !== undefined) map[tx.account_id] += tx.amount;
+      } else if (tx.type === 'expense') {
+        if (map[tx.account_id] !== undefined) map[tx.account_id] -= tx.amount;
+      } else if (tx.type === 'transfer') {
+        if (map[tx.account_id] !== undefined) map[tx.account_id] -= tx.amount;
+        if (tx.to_account_id && map[tx.to_account_id] !== undefined) {
+          map[tx.to_account_id] += tx.amount;
+        }
+      }
+    });
+
+    loans.forEach((l) => {
+      if (l.deleted_at) return;
+      if (map[l.account_id] !== undefined) {
+        map[l.account_id] += l.type === 'lent' ? -l.amount : l.amount;
+      }
+    });
+
+    const loanMap: Record<string, LoanRecord> = {};
+    for (const l of loans) loanMap[l.id] = l;
+    loanRepayments.forEach((rep) => {
+      const l = loanMap[rep.loan_id];
+      if (!l || l.deleted_at) return;
+      if (map[rep.account_id] !== undefined) {
+        map[rep.account_id] += l.type === 'lent' ? rep.amount : -rep.amount;
       }
     });
 
     return map;
-  }, [accounts, transactions]);
+  }, [accounts, transactions, loans, loanRepayments]);
 
   // Filtered categories with "Others" always last
   const filteredCategories = useMemo(() => {
@@ -590,12 +649,12 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
                           <View style={{ flex: 1 }}>
                             <ThemedText style={[styles.cardTitle, { color: colors.text }]}>{acc.name}</ThemedText>
                             <ThemedText style={[styles.cardSub, { color: colors.textSecondary }]}>
-                              {typeMeta?.label || acc.type} • Opening: {formatCurrency(acc.opening_balance, { symbol: 'PKR' })}
+                              {typeMeta?.label || acc.type} • Opening: {formatCurrency(acc.opening_balance, { symbol: sym })}
                             </ThemedText>
                           </View>
                           <View style={{ alignItems: 'flex-end', marginRight: Spacing.xs }}>
                             <ThemedText style={[styles.balanceText, { color: colors.text }]}>
-                              {formatCurrency(currentBal, { symbol: 'PKR' })}
+                              {formatCurrency(currentBal, { symbol: sym })}
                             </ThemedText>
                             <ThemedText style={[styles.balanceSub, { color: colors.textSecondary }]}>Balance</ThemedText>
                           </View>
@@ -674,7 +733,7 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
 
                   <View style={styles.catGrid}>
                     {filteredCategories.map((cat) => {
-                      const meta = getCategoryMeta(cat.name, categories);
+                      const meta = getCategoryMeta(cat.id, categories);
                       const isBuiltin = cat.is_default === 1 || cat.id.startsWith('default-');
                       return (
                         <View
@@ -708,15 +767,27 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
                               {cat.type.toUpperCase()}{isBuiltin ? ' • BUILT-IN' : ' • CUSTOM'}
                             </ThemedText>
                           </View>
-                          {!isBuiltin && (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <TouchableOpacity
-                              onPress={() => handleDeleteCategory(cat.id, cat.name)}
+                              onPress={() => {
+                                setEditingCategory(cat);
+                                setShowEditCategory(true);
+                              }}
                               style={styles.cleanIconActionBtn}
                               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                             >
-                              <Ionicons name="trash-outline" size={17} color={colors.expense} />
+                              <Ionicons name="pencil-outline" size={17} color={colors.textSecondary} />
                             </TouchableOpacity>
-                          )}
+                            {!isBuiltin && (
+                              <TouchableOpacity
+                                onPress={() => handleDeleteCategory(cat.id, cat.name)}
+                                style={styles.cleanIconActionBtn}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              >
+                                <Ionicons name="trash-outline" size={17} color={colors.expense} />
+                              </TouchableOpacity>
+                            )}
+                          </View>
                         </View>
                       );
                     })}
@@ -763,6 +834,19 @@ export function ManageHubModal({ visible, initialTab = 'accounts', onClose }: Ma
         onSaved={() => {
           setShowEditAccount(false);
           setEditingAccount(null);
+        }}
+      />
+
+      <EditCategoryModal
+        visible={showEditCategory}
+        category={editingCategory}
+        onClose={() => {
+          setShowEditCategory(false);
+          setEditingCategory(null);
+        }}
+        onCategoryUpdated={() => {
+          setShowEditCategory(false);
+          setEditingCategory(null);
         }}
       />
 
@@ -1057,7 +1141,7 @@ const es = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.xl,
     paddingTop: Spacing.lg,
-    paddingBottom: Spacing.lg,
+    paddingBottom: Spacing.base,
   },
   label: {
     fontSize: 11,

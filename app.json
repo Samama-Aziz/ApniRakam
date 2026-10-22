@@ -2,7 +2,7 @@
   "expo": {
     "name": "ApniRakam",
     "slug": "ApniRakam",
-    "version": "1.0.0",
+    "version": "1.0.01",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "apnirakam",
@@ -13,6 +13,8 @@
     },
     "android": {
       "package": "com.apnirakam.app",
+      "versionCode": 4,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#042F1E",
         "foregroundImage": "./assets/images/logo.png",
@@ -29,9 +31,9 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#042F1E",
-          "image": "./assets/images/logo.png",
+          "image": "./assets/images/splash_screen.png",
           "dark": {
-            "image": "./assets/images/logo.png",
+            "image": "./assets/images/splash_screen.png",
             "backgroundColor": "#042F1E"
           },
           "imageWidth": 100,

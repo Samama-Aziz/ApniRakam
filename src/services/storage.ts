@@ -5,6 +5,8 @@ export const STORAGE_KEYS = {
   HAS_ONBOARDED: 'apnirakam_has_onboarded',
   USER_PIN: 'apnirakam_user_pin',
   USER_PROFILE: 'apnirakam_user_profile',
+  CURRENCY: 'apnirakam_currency',
+  CURRENCY_SYMBOL: 'apnirakam_currency_symbol',
   DEFAULT_CATEGORY: 'apnirakam_default_category',
   DEFAULT_ACCOUNT: 'apnirakam_default_account',
   DEFAULT_BUDGET_PERIOD: 'apnirakam_default_budget_period',

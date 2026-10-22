@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -18,6 +18,7 @@ import ThemedButton from '@/components/common/ThemedButton';
 import { accountRepository } from '@/database';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
+import { useKeyboard } from '@/hooks/useKeyboard';
 import { ACCOUNT_TYPE_OPTIONS, AccountTypeOption } from '@/utils/categoryMeta';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
 import type { AccountRecord } from '@/database/repositories/types';
@@ -30,11 +31,25 @@ interface AddAccountModalProps {
 
 export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccountModalProps) {
   const { colors, isDark } = useTheme();
-  const { addAccountToStore, loadAppData } = useAppStore();
+  const { addAccountToStore, loadAppData, currency, currencySymbol } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
+  const scrollRef = useRef<ScrollView>(null);
+
   const [name, setName] = useState('');
   const [selectedType, setSelectedType] = useState<AccountTypeOption['type']>('bank');
   const [openingBalance, setOpeningBalance] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isOpeningBalanceFocused, setIsOpeningBalanceFocused] = useState(false);
+
+  useEffect(() => {
+    if (isKeyboardVisible && isOpeningBalanceFocused) {
+      const timer = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 80);
+      return () => clearTimeout(timer);
+    }
+  }, [isKeyboardVisible, isOpeningBalanceFocused]);
 
   // Custom alert dialog state
   const [alertConfig, setAlertConfig] = useState<{
@@ -58,11 +73,14 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
   };
 
   const handleCreate = async () => {
-    if (!name.trim()) {
+    const trimmedName = name.trim();
+    const resolvedName = selectedType === 'cash' && !trimmedName ? 'Cash Wallet' : trimmedName;
+
+    if (!resolvedName) {
       setAlertConfig({
         visible: true,
         title: 'Account Name Required',
-        message: 'Please enter a name for the account (e.g. Meezan Bank, Easypaisa, Cash in Wallet).',
+        message: 'Please enter a name for the account (e.g. Meezan Bank, Easypaisa, Cash Wallet).',
         buttons: [{ text: 'OK' }],
       });
       return;
@@ -73,9 +91,9 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
     try {
       setIsSubmitting(true);
       const newAccount = await accountRepository.create({
-        name: name.trim(),
+        name: resolvedName,
         type: selectedType,
-        currency: 'PKR',
+        currency: currency || 'PKR',
         opening_balance: parsedBalance,
       });
 
@@ -101,10 +119,14 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
+    <Modal visible={visible} transparent statusBarTranslucent={true} animationType="slide" onRequestClose={handleClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.overlay}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+        style={[
+          styles.overlay,
+          Platform.OS === 'android' && isKeyboardVisible && { paddingBottom: keyboardHeight },
+        ]}
       >
         <View
           style={[
@@ -141,7 +163,14 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            ref={scrollRef}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
             {/* Account Name */}
             <View style={styles.fieldGroup}>
               <ThemedText variant="label" style={[styles.label, { color: colors.textSecondary }]}>
@@ -150,7 +179,7 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
               <TextInput
                 value={name}
                 onChangeText={setName}
-                placeholder="e.g. Meezan Bank, Sadapay, Cash Wallet"
+                placeholder={selectedType === 'cash' ? 'Cash Wallet' : 'e.g. Meezan Bank, Sadapay'}
                 placeholderTextColor={colors.textTertiary}
                 style={[
                   styles.textInput,
@@ -161,6 +190,9 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
                   },
                 ]}
                 autoFocus={true}
+                onFocus={() => {
+                  scrollRef.current?.scrollTo({ y: 0, animated: true });
+                }}
               />
             </View>
 
@@ -175,7 +207,12 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
                   return (
                     <TouchableOpacity
                       key={item.type}
-                      onPress={() => setSelectedType(item.type)}
+                      onPress={() => {
+                        setSelectedType(item.type);
+                        if (item.type === 'cash' && !name.trim()) {
+                          setName('Cash Wallet');
+                        }
+                      }}
                       style={[
                         styles.typeCard,
                         {
@@ -205,7 +242,7 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
                           color={isSelected ? colors.primary : colors.textSecondary}
                         />
                       </View>
-                      <View style={{ flex: 1 }}>
+                      <View style={{ flex: 1, flexShrink: 1 }}>
                         <ThemedText
                           style={[
                             styles.typeName,
@@ -231,7 +268,7 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
             {/* Opening Balance */}
             <View style={styles.fieldGroup}>
               <ThemedText variant="label" style={[styles.label, { color: colors.textSecondary }]}>
-                OPENING / CURRENT BALANCE (PKR)
+                OPENING / CURRENT BALANCE ({sym})
               </ThemedText>
               <View
                 style={[
@@ -242,7 +279,7 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
                   },
                 ]}
               >
-                <ThemedText style={[styles.currencyBadge, { color: colors.primary }]}>PKR</ThemedText>
+                <ThemedText style={[styles.currencyBadge, { color: colors.primary }]}>{sym}</ThemedText>
                 <TextInput
                   value={openingBalance}
                   onChangeText={setOpeningBalance}
@@ -250,6 +287,13 @@ export function AddAccountModal({ visible, onClose, onAccountCreated }: AddAccou
                   placeholderTextColor={colors.textTertiary}
                   keyboardType="numeric"
                   style={[styles.balanceInput, { color: colors.text }]}
+                  onFocus={() => {
+                    setIsOpeningBalanceFocused(true);
+                    setTimeout(() => {
+                      scrollRef.current?.scrollToEnd({ animated: true });
+                    }, 120);
+                  }}
+                  onBlur={() => setIsOpeningBalanceFocused(false)}
                 />
               </View>
               <ThemedText style={[styles.helperText, { color: colors.textSecondary }]}>
@@ -330,7 +374,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: Spacing.xl,
     paddingTop: Spacing.lg,
-    paddingBottom: Spacing.lg,
+    paddingBottom: Spacing.base,
   },
   fieldGroup: {
     marginBottom: Spacing.xl,

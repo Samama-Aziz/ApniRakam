@@ -17,7 +17,8 @@ import ThemedButton from '@/components/common/ThemedButton';
 import { categoryRepository } from '@/database';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
-import { SELECTABLE_CATEGORY_ICONS, getCategoryMeta } from '@/utils/categoryMeta';
+import { useKeyboard } from '@/hooks/useKeyboard';
+import { SELECTABLE_CATEGORY_ICONS, SELECTABLE_CATEGORY_COLORS, getCategoryMeta } from '@/utils/categoryMeta';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
 import type { CategoryRecord } from '@/database/repositories/types';
 
@@ -35,16 +36,19 @@ export function AddCategoryModal({
   onCategoryCreated,
 }: AddCategoryModalProps) {
   const { colors, isDark } = useTheme();
+  const { keyboardHeight } = useKeyboard();
   const { addCategoryToStore, loadAppData } = useAppStore();
   const [name, setName] = useState('');
   const [type, setType] = useState<'expense' | 'income'>(initialType);
   const [selectedIcon, setSelectedIcon] = useState<keyof typeof Ionicons.glyphMap>('pricetag-outline');
+  const [selectedColor, setSelectedColor] = useState<string>(initialType === 'income' ? '#10B981' : '#EF4444');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Sync initial type when opening
   React.useEffect(() => {
     if (visible) {
       setType(initialType);
+      setSelectedColor(initialType === 'income' ? '#10B981' : '#EF4444');
     }
   }, [visible, initialType]);
 
@@ -60,6 +64,7 @@ export function AddCategoryModal({
     setName('');
     setType(initialType);
     setSelectedIcon('pricetag-outline');
+    setSelectedColor(initialType === 'income' ? '#10B981' : '#EF4444');
     setIsSubmitting(false);
   };
 
@@ -85,6 +90,7 @@ export function AddCategoryModal({
         name: name.trim(),
         type,
         icon: selectedIcon,
+        color: selectedColor,
         is_default: 0,
       });
 
@@ -115,7 +121,8 @@ export function AddCategoryModal({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.overlay}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+        style={[styles.overlay, { paddingBottom: Platform.OS === 'android' ? keyboardHeight : 0 }]}
       >
         <View
           style={[
@@ -152,7 +159,13 @@ export function AddCategoryModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          >
             {/* Type Selector (Expense vs Income) */}
             <View
               style={[
@@ -164,7 +177,10 @@ export function AddCategoryModal({
               ]}
             >
               <TouchableOpacity
-                onPress={() => setType('expense')}
+                onPress={() => {
+                  setType('expense');
+                  if (selectedColor === '#10B981') setSelectedColor('#EF4444');
+                }}
                 style={[
                   styles.togglePill,
                   type === 'expense' && { backgroundColor: colors.expense },
@@ -187,7 +203,10 @@ export function AddCategoryModal({
                 </ThemedText>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => setType('income')}
+                onPress={() => {
+                  setType('income');
+                  if (selectedColor === '#EF4444') setSelectedColor('#10B981');
+                }}
                 style={[
                   styles.togglePill,
                   type === 'income' && { backgroundColor: colors.income },
@@ -225,8 +244,8 @@ export function AddCategoryModal({
                   },
                 ]}
               >
-                <View style={[styles.previewIconCircle, { backgroundColor: previewMeta.color + '25' }]}>
-                  <Ionicons name={selectedIcon} size={20} color={previewMeta.color} />
+                <View style={[styles.previewIconCircle, { backgroundColor: selectedColor + '25' }]}>
+                  <Ionicons name={selectedIcon} size={20} color={selectedColor} />
                 </View>
                 <TextInput
                   value={name}
@@ -236,6 +255,37 @@ export function AddCategoryModal({
                   style={[styles.textInput, { color: colors.text }]}
                   autoFocus={true}
                 />
+              </View>
+            </View>
+
+            {/* Select Color */}
+            <View style={styles.fieldGroup}>
+              <ThemedText variant="label" style={[styles.label, { color: colors.textSecondary }]}>
+                CATEGORY COLOR
+              </ThemedText>
+              <View style={styles.colorPalette}>
+                {SELECTABLE_CATEGORY_COLORS.map((colorItem) => {
+                  const isSelected = selectedColor.toLowerCase() === colorItem.toLowerCase();
+                  return (
+                    <TouchableOpacity
+                      key={colorItem}
+                      onPress={() => setSelectedColor(colorItem)}
+                      style={[
+                        styles.colorCircle,
+                        { backgroundColor: colorItem },
+                        isSelected && [
+                          styles.colorCircleSelected,
+                          { borderColor: isDark ? '#FFFFFF' : '#0F172A', shadowColor: colorItem },
+                        ],
+                      ]}
+                      activeOpacity={0.8}
+                    >
+                      {isSelected && (
+                        <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
 
@@ -412,6 +462,28 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     paddingVertical: Spacing.md,
+  },
+  colorPalette: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  colorCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  colorCircleSelected: {
+    borderWidth: 2.5,
+    elevation: 3,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    transform: [{ scale: 1.1 }],
   },
   iconGrid: {
     flexDirection: 'row',

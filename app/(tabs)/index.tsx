@@ -2,12 +2,13 @@ import ThemedText from '@/components/common/ThemedText';
 import { AddAccountModal } from '@/components/modals/AddAccountModal';
 import { AddCategoryModal } from '@/components/modals/AddCategoryModal';
 import { EditTransactionModal } from '@/components/modals/EditTransactionModal';
+import { LoanDetailsModal } from '@/components/modals/LoanDetailsModal';
 import { ManageHubModal } from '@/components/modals/ManageHubModal';
 import { Radius, Spacing } from '@/constants/theme';
-import type { TransactionRecord } from '@/database/repositories/types';
+import type { TransactionRecord, LoanRecord } from '@/database/repositories/types';
 import { useTheme } from '@/hooks/useTheme';
 import { useAppStore } from '@/store/useAppStore';
-import { ACCOUNT_TYPE_OPTIONS, getCategoryDisplayName, getCategoryMeta } from '@/utils/categoryMeta';
+import { ACCOUNT_TYPE_OPTIONS, DISTINCT_CATEGORY_PALETTE, getCategoryDisplayName, getCategoryMeta } from '@/utils/categoryMeta';
 import { formatCurrency, formatDate } from '@/utils/formatters';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -33,10 +34,15 @@ function monthLabel(date: Date) {
   return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+type RecentActivityItem =
+  | { kind: 'transaction'; data: TransactionRecord; date: string }
+  | { kind: 'loan'; data: LoanRecord; date: string };
+
 export default function HomeScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
-  const { transactions, accounts, categories, budgets, isLoadingData, userName } = useAppStore();
+  const { transactions, accounts, categories, budgets, loans, loanRepayments, isLoadingData, userName, currencySymbol, currency } = useAppStore();
+  const sym = currencySymbol || currency || 'PKR';
 
   // Month navigation state
   const [monthOffset, setMonthOffset] = React.useState(0);
@@ -62,21 +68,35 @@ export default function HomeScreen() {
     let monthExpense = 0;
     for (const tx of monthTxs) {
       if (tx.type === 'income') monthIncome += tx.amount;
-      else monthExpense += tx.amount;
+      else if (tx.type === 'expense') monthExpense += tx.amount;
     }
     return { monthIncome, monthExpense };
   }, [monthTxs]);
 
-  // Total balance across all time (all accounts opening balance + transactions)
+  // Total balance across all time (all accounts opening balance + net transactions + loans + repayments)
   const totalBalance = useMemo(() => {
-    let bal = accounts.reduce((s, a) => s + a.opening_balance, 0);
+    let bal = accounts.reduce((s, a) => s + (a.opening_balance || 0), 0);
     for (const tx of transactions) {
-      bal += tx.type === 'income' ? tx.amount : -tx.amount;
+      if (tx.deleted_at) continue;
+      if (tx.type === 'income') bal += tx.amount;
+      else if (tx.type === 'expense') bal -= tx.amount;
+      // Transfer between accounts preserves totalBalance
+    }
+    for (const loan of loans) {
+      if (loan.deleted_at) continue;
+      bal += loan.type === 'lent' ? -loan.amount : loan.amount;
+    }
+    const loanMap: Record<string, LoanRecord> = {};
+    for (const l of loans) loanMap[l.id] = l;
+    for (const rep of loanRepayments) {
+      const l = loanMap[rep.loan_id];
+      if (!l || l.deleted_at) continue;
+      bal += l.type === 'lent' ? rep.amount : -rep.amount;
     }
     return bal;
-  }, [accounts, transactions]);
+  }, [accounts, transactions, loans, loanRepayments]);
 
-  // Account balances map (opening balance + net transactions per account)
+  // Account balances map (opening balance + net transactions + loans + repayments per account)
   const accountBalances = useMemo(() => {
     const map: Record<string, number> = {};
     accounts.forEach((acc) => {
@@ -84,12 +104,53 @@ export default function HomeScreen() {
     });
     transactions.forEach((tx) => {
       if (tx.deleted_at) return;
-      if (map[tx.account_id] !== undefined) {
-        map[tx.account_id] += tx.type === 'income' ? tx.amount : -tx.amount;
+      if (tx.type === 'income') {
+        if (map[tx.account_id] !== undefined) map[tx.account_id] += tx.amount;
+      } else if (tx.type === 'expense') {
+        if (map[tx.account_id] !== undefined) map[tx.account_id] -= tx.amount;
+      } else if (tx.type === 'transfer') {
+        // Source account debited
+        if (map[tx.account_id] !== undefined) map[tx.account_id] -= tx.amount;
+        // Destination account credited
+        if (tx.to_account_id && map[tx.to_account_id] !== undefined) {
+          map[tx.to_account_id] += tx.amount;
+        }
+      }
+    });
+    loans.forEach((l) => {
+      if (l.deleted_at) return;
+      if (map[l.account_id] !== undefined) {
+        map[l.account_id] += l.type === 'lent' ? -l.amount : l.amount;
+      }
+    });
+    const loanMap: Record<string, LoanRecord> = {};
+    for (const l of loans) loanMap[l.id] = l;
+    loanRepayments.forEach((rep) => {
+      const l = loanMap[rep.loan_id];
+      if (!l || l.deleted_at) return;
+      if (map[rep.account_id] !== undefined) {
+        map[rep.account_id] += l.type === 'lent' ? rep.amount : -rep.amount;
       }
     });
     return map;
-  }, [accounts, transactions]);
+  }, [accounts, transactions, loans, loanRepayments]);
+
+  // Outstanding loan stats (Lent vs Borrowed)
+  const loanStats = useMemo(() => {
+    let lentOutstanding = 0;
+    let borrowedOutstanding = 0;
+    for (const l of loans) {
+      if (l.deleted_at || l.status === 'paid') continue;
+      const repaid = l.paid_amount || 0;
+      const remaining = Math.max(0, l.amount - repaid);
+      if (l.type === 'lent') {
+        lentOutstanding += remaining;
+      } else {
+        borrowedOutstanding += remaining;
+      }
+    }
+    return { lentOutstanding, borrowedOutstanding };
+  }, [loans]);
 
   // Modals state
   const [showManageHub, setShowManageHub] = React.useState(false);
@@ -98,41 +159,93 @@ export default function HomeScreen() {
   const [showAddCategory, setShowAddCategory] = React.useState(false);
   const [selectedTxForEdit, setSelectedTxForEdit] = React.useState<TransactionRecord | null>(null);
   const [editModalVisible, setEditModalVisible] = React.useState(false);
+  const [selectedLoanForDetails, setSelectedLoanForDetails] = React.useState<LoanRecord | null>(null);
+  const [loanDetailsModalVisible, setLoanDetailsModalVisible] = React.useState(false);
 
-  // Category breakdown for the month (expenses only) with budget knowledge
+  // Category breakdown: top 8 budgeted categories prioritized by recent transaction activity
   const categoryBreakdown = useMemo(() => {
-    const map: Record<string, number> = {};
+    // 1. Month spending per category
+    const monthSpendingMap: Record<string, number> = {};
     for (const tx of monthTxs) {
-      if (tx.type !== 'expense') continue;
-      map[tx.category_id] = (map[tx.category_id] ?? 0) + tx.amount;
+      if (tx.type !== 'expense' || !tx.category_id) continue;
+      monthSpendingMap[tx.category_id] = (monthSpendingMap[tx.category_id] ?? 0) + tx.amount;
     }
-    const total = Object.values(map).reduce((s, v) => s + v, 0);
-    if (total === 0) return [];
+    const totalMonthExpense = Object.values(monthSpendingMap).reduce((s, v) => s + v, 0);
 
+    // 2. Budget limits - ONLY categories with an assigned budget
     const budgetMap: Record<string, number> = {};
     budgets.forEach((b) => {
-      budgetMap[b.category_id] = b.amount;
+      if (b.amount > 0) {
+        budgetMap[b.category_id] = b.amount;
+      }
     });
 
-    return Object.entries(map)
-      .map(([cat_id, amt]) => {
-        const budgetLimit = budgetMap[cat_id] ?? 0;
-        const budgetPct = budgetLimit > 0 ? Math.round((amt / budgetLimit) * 100) : null;
+    const budgetedCatIds = Object.keys(budgetMap);
+    if (budgetedCatIds.length === 0) return [];
+
+    // 3. Find most recent transaction activity timestamp across transactions
+    const lastActivityMap: Record<string, number> = {};
+    for (const tx of transactions) {
+      if (tx.category_id && budgetMap[tx.category_id]) {
+        const time = new Date(tx.date).getTime();
+        if (!lastActivityMap[tx.category_id] || time > lastActivityMap[tx.category_id]) {
+          lastActivityMap[tx.category_id] = time;
+        }
+      }
+    }
+
+    // 4. Return top 8 budgeted categories
+    return budgetedCatIds
+      .map((cat_id) => {
+        const amt = monthSpendingMap[cat_id] ?? 0;
+        const budgetLimit = budgetMap[cat_id];
+        const budgetPct = Math.round((amt / budgetLimit) * 100);
+        const percent = totalMonthExpense > 0 ? Math.round((amt / totalMonthExpense) * 100) : 0;
+        const isOverBudget = amt > budgetLimit;
+        const remaining = budgetLimit - amt;
+        const lastTxTime = lastActivityMap[cat_id] ?? 0;
+
         return {
           cat_id,
           amount: amt,
-          percent: Math.round((amt / total) * 100),
+          percent,
           budgetLimit,
           budgetPct,
-          isOverBudget: budgetLimit > 0 && amt > budgetLimit,
+          isOverBudget,
+          remaining,
+          lastTxTime,
         };
       })
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 5);
-  }, [monthTxs, budgets]);
+      .sort((a, b) => {
+        // Prioritize by recent transaction activity
+        if (b.lastTxTime !== a.lastTxTime) {
+          return b.lastTxTime - a.lastTxTime;
+        }
+        // Then by current spending amount
+        if (b.amount !== a.amount) {
+          return b.amount - a.amount;
+        }
+        // Then by budget size
+        return b.budgetLimit - a.budgetLimit;
+      })
+      .slice(0, 8);
+  }, [monthTxs, budgets, transactions]);
 
-  // Recent 5 transactions
-  const recentTxs = useMemo(() => monthTxs.slice(0, 5), [monthTxs]);
+  // Unified Activities (Transactions + Loans) for the selected month
+  const recentActivities: RecentActivityItem[] = useMemo(() => {
+    const list: RecentActivityItem[] = [
+      ...monthTxs.map((t) => ({ kind: 'transaction' as const, data: t, date: t.date })),
+      ...loans
+        .filter((l) => {
+          if (l.deleted_at) return false;
+          const d = new Date(l.date);
+          return d >= start && d <= end;
+        })
+        .map((l) => ({ kind: 'loan' as const, data: l, date: l.date })),
+    ];
+    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return list;
+  }, [monthTxs, loans, start, end]);
 
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])), [accounts]);
 
@@ -195,7 +308,7 @@ export default function HomeScreen() {
             <View style={styles.balanceCardTop}>
               <ThemedText style={[styles.balanceLabel, { color: colors.textSecondary }]}>TOTAL BALANCE</ThemedText>
               <View style={[styles.currencyBadge, { backgroundColor: colors.primaryLight, borderColor: colors.primary + '30' }]}>
-                <ThemedText style={[styles.currencyBadgeText, { color: colors.primary }]}>PKR</ThemedText>
+                <ThemedText style={[styles.currencyBadgeText, { color: colors.primary }]}>{currency || sym}</ThemedText>
               </View>
             </View>
 
@@ -203,37 +316,68 @@ export default function HomeScreen() {
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 16 }} />
             ) : (
               <ThemedText variant="amountLarge" style={[styles.balanceNumber, { color: colors.text }]}>
-                {formatCurrency(totalBalance, { symbol: 'PKR' })}
+                {formatCurrency(totalBalance, { symbol: sym })}
               </ThemedText>
             )}
 
-            <View style={[styles.subStatsRow, { backgroundColor: isDark ? colors.backgroundSecondary : '#F8FAFC', borderColor: colors.borderSubtle }]}>
+            <View style={[styles.subStatsRow, { backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted, borderColor: isDark ? colors.borderSubtle : colors.border }]}>
               <View style={styles.subStatItem}>
                 <View style={[styles.subStatIconCircle, { backgroundColor: colors.incomeLight }]}>
                   <Ionicons name="arrow-down" size={14} color={colors.income} />
                 </View>
-                <View>
+                <View style={{ flex: 1 }}>
                   <ThemedText style={[styles.subStatTitle, { color: colors.textSecondary }]}>Income</ThemedText>
                   <ThemedText style={[styles.subStatValue, { color: colors.income }]}>
-                    {formatCurrency(monthIncome, { symbol: 'PKR' })}
+                    {formatCurrency(monthIncome, { symbol: sym })}
                   </ThemedText>
                 </View>
               </View>
 
-              <View style={[styles.statDivider, { backgroundColor: colors.borderSubtle }]} />
+              <View style={[styles.statDivider, { backgroundColor: isDark ? colors.borderSubtle : colors.border }]} />
 
               <View style={styles.subStatItem}>
                 <View style={[styles.subStatIconCircle, { backgroundColor: colors.expenseLight }]}>
                   <Ionicons name="arrow-up" size={14} color={colors.expense} />
                 </View>
-                <View>
+                <View style={{ flex: 1 }}>
                   <ThemedText style={[styles.subStatTitle, { color: colors.textSecondary }]}>Expenses</ThemedText>
                   <ThemedText style={[styles.subStatValue, { color: colors.expense }]}>
-                    {formatCurrency(monthExpense, { symbol: 'PKR' })}
+                    {formatCurrency(monthExpense, { symbol: sym })}
                   </ThemedText>
                 </View>
               </View>
             </View>
+
+            {/* Active Loans summary banner if any */}
+            {(loanStats.lentOutstanding > 0 || loanStats.borrowedOutstanding > 0) && (
+              <View style={[styles.loanSummaryBar, { backgroundColor: isDark ? colors.surfaceElevated : colors.surfaceMuted, borderColor: isDark ? colors.borderSubtle : colors.border }]}>
+                {loanStats.lentOutstanding > 0 && (
+                  <View style={styles.loanSummaryItem}>
+                    <Ionicons name="arrow-up-circle" size={16} color="#F59E0B" />
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={[styles.loanSummaryLabel, { color: colors.textSecondary }]}>Lent (To Collect)</ThemedText>
+                      <ThemedText style={[styles.loanSummaryValue, { color: '#F59E0B' }]}>
+                        {formatCurrency(loanStats.lentOutstanding, { symbol: sym })}
+                      </ThemedText>
+                    </View>
+                  </View>
+                )}
+                {loanStats.lentOutstanding > 0 && loanStats.borrowedOutstanding > 0 && (
+                  <View style={[styles.statDivider, { backgroundColor: isDark ? colors.borderSubtle : colors.border, height: 24 }]} />
+                )}
+                {loanStats.borrowedOutstanding > 0 && (
+                  <View style={styles.loanSummaryItem}>
+                    <Ionicons name="arrow-down-circle" size={16} color="#8B5CF6" />
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={[styles.loanSummaryLabel, { color: colors.textSecondary }]}>Borrowed (To Repay)</ThemedText>
+                      <ThemedText style={[styles.loanSummaryValue, { color: '#8B5CF6' }]}>
+                        {formatCurrency(loanStats.borrowedOutstanding, { symbol: sym })}
+                      </ThemedText>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
 
           {/* Accounts & Wallets Carousel */}
@@ -253,7 +397,12 @@ export default function HomeScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.accountScrollList}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.accountScrollList}
+              style={styles.accountScroll}
+            >
               {accounts.map((acc) => {
                 const bal = accountBalances[acc.id] ?? acc.opening_balance;
                 const typeOption = ACCOUNT_TYPE_OPTIONS.find((t) => t.type === acc.type);
@@ -264,7 +413,15 @@ export default function HomeScreen() {
                       setManageHubTab('accounts');
                       setShowManageHub(true);
                     }}
-                    style={[styles.accountOverviewCard, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.25 : 0.05 }]}
+                    style={[
+                      styles.accountOverviewCard,
+                      {
+                        backgroundColor: colors.surface,
+                        borderColor: isDark ? colors.borderSubtle : colors.border,
+                        shadowColor: colors.cardShadow,
+                        shadowOpacity: isDark ? 0.3 : 0.08,
+                      },
+                    ]}
                     activeOpacity={0.7}
                   >
                     <View style={styles.accountCardTop}>
@@ -275,14 +432,20 @@ export default function HomeScreen() {
                     </View>
                     <ThemedText style={[styles.accountCardName, { color: colors.text }]} numberOfLines={1}>{acc.name}</ThemedText>
                     <ThemedText style={[styles.accountCardBal, { color: bal < 0 ? colors.expense : colors.text }]}>
-                      {formatCurrency(bal, { symbol: 'PKR' })}
+                      {formatCurrency(bal, { symbol: sym })}
                     </ThemedText>
                   </TouchableOpacity>
                 );
               })}
               <TouchableOpacity
                 onPress={() => setShowAddAccount(true)}
-                style={[styles.accountAddCard, { borderColor: colors.primary + '50', backgroundColor: colors.primaryLight }]}
+                style={[
+                  styles.accountAddCard,
+                  {
+                    borderColor: colors.primary + (isDark ? '50' : '40'),
+                    backgroundColor: isDark ? colors.primaryLight : '#F0FDF4',
+                  },
+                ]}
                 activeOpacity={0.7}
               >
                 <View style={[styles.accountAddCircle, { backgroundColor: colors.surface }]}>
@@ -298,15 +461,12 @@ export default function HomeScreen() {
             <View style={styles.sectionHeader}>
               <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>Spending by Category</ThemedText>
               <TouchableOpacity
-                onPress={() => {
-                  setManageHubTab('categories');
-                  setShowManageHub(true);
-                }}
+                onPress={() => router.push('/(tabs)/budgets')}
                 style={styles.cleanSectionAction}
                 activeOpacity={0.7}
               >
-                <Ionicons name="grid-outline" size={14} color={colors.primary} />
-                <ThemedText style={[styles.cleanSectionActionText, { color: colors.primary }]}>Categories</ThemedText>
+                <Ionicons name="wallet-outline" size={14} color={colors.primary} />
+                <ThemedText style={[styles.cleanSectionActionText, { color: colors.primary }]}>Manage Budgets</ThemedText>
               </TouchableOpacity>
             </View>
 
@@ -314,57 +474,87 @@ export default function HomeScreen() {
               {categoryBreakdown.length === 0 ? (
                 <View style={styles.emptyBox}>
                   <Ionicons name="pie-chart-outline" size={32} color={colors.borderSubtle} />
-                  <ThemedText style={[styles.emptyText, { color: colors.textMuted }]}>No expenses this month</ThemedText>
+                  <ThemedText style={[styles.emptyText, { color: colors.textMuted }]}>No budgeted categories yet</ThemedText>
+                  <TouchableOpacity
+                    style={styles.emptyAction}
+                    onPress={() => router.push('/(tabs)/budgets')}
+                  >
+                    <ThemedText style={[styles.emptyActionText, { color: colors.primary }]}>
+                      Tap to set limits in Manage Budgets
+                    </ThemedText>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <>
                   <View style={styles.progressBarsContainer}>
-                    {categoryBreakdown.map((cat) => {
-                      const meta = getCategoryMeta(cat.cat_id, categories);
-                      const displayName = getCategoryDisplayName(cat.cat_id, categories);
-                      const progressPct = Math.min(100, cat.budgetLimit > 0 ? (cat.budgetPct || 0) : cat.percent);
-                      return (
-                        <View key={cat.cat_id} style={styles.categoryItemBlock}>
-                          <View style={styles.categoryProgressRow}>
-                            <View style={styles.categoryInfo}>
-                              <View style={[styles.categoryDot, { backgroundColor: meta.color }]} />
-                              <ThemedText style={[styles.categoryLabel, { color: colors.text }]}>{displayName}</ThemedText>
+                    {(() => {
+                      const usedColors = new Set<string>();
+                      return categoryBreakdown.map((cat) => {
+                        const meta = getCategoryMeta(cat.cat_id, categories);
+                        const displayName = getCategoryDisplayName(cat.cat_id, categories);
+                        const hasBudget = cat.budgetLimit > 0;
+                        const progressPct = Math.min(100, hasBudget ? (cat.budgetPct || 0) : cat.percent);
+
+                        let catColor = meta.color;
+                        if (usedColors.has(catColor)) {
+                          const fallback = DISTINCT_CATEGORY_PALETTE.find((c) => !usedColors.has(c));
+                          if (fallback) catColor = fallback;
+                        }
+                        usedColors.add(catColor);
+
+                        return (
+                          <View key={cat.cat_id} style={styles.categoryItemBlock}>
+                            <View style={styles.categoryProgressRow}>
+                              <View style={styles.categoryInfo}>
+                                <View style={[styles.categoryDot, { backgroundColor: catColor }]} />
+                                <ThemedText style={[styles.categoryLabel, { color: colors.text }]}>{displayName}</ThemedText>
+                              </View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                                <ThemedText style={[styles.categoryAmountSub, { color: colors.textSecondary }]}>
+                                  {sym} {cat.amount.toLocaleString()}
+                                  {hasBudget ? ` / ${cat.budgetLimit.toLocaleString()}` : ''}
+                                </ThemedText>
+                                <ThemedText
+                                  style={[
+                                    styles.categoryPercentText,
+                                    { color: cat.isOverBudget ? colors.expense : catColor },
+                                  ]}
+                                >
+                                  {hasBudget
+                                    ? cat.isOverBudget
+                                      ? `OVER ${cat.budgetPct}%`
+                                      : `${cat.budgetPct}%`
+                                    : `${cat.percent}%`}
+                                </ThemedText>
+                              </View>
                             </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-                              <ThemedText style={[styles.categoryAmountSub, { color: colors.textSecondary }]}>
-                                PKR {cat.amount.toLocaleString()}
-                                {cat.budgetLimit > 0 ? ` / ${cat.budgetLimit.toLocaleString()}` : ''}
-                              </ThemedText>
-                              <ThemedText style={[styles.categoryPercentText, { color: cat.isOverBudget ? colors.expense : meta.color }]}>
-                                {cat.budgetLimit > 0 ? (cat.isOverBudget ? `OVER ${cat.budgetPct}%` : `${cat.budgetPct}%`) : `${cat.percent}%`}
-                              </ThemedText>
+
+                            {/* Full-width Progress Bar */}
+                            <View style={[styles.categoryItemTrack, { backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7', width: '100%' }]}>
+                              <View
+                                style={[
+                                  styles.categoryItemFill,
+                                  {
+                                    width: `${progressPct}%`,
+                                    backgroundColor: cat.isOverBudget ? colors.expense : catColor,
+                                  },
+                                ]}
+                              />
                             </View>
                           </View>
-                          {/* Full-width Progress Bar */}
-                          <View style={[styles.categoryItemTrack, { backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7', width: '100%' }]}>
-                            <View
-                              style={[
-                                styles.categoryItemFill,
-                                {
-                                  width: `${progressPct}%`,
-                                  backgroundColor: cat.isOverBudget ? colors.expense : meta.color,
-                                },
-                              ]}
-                            />
-                          </View>
-                        </View>
-                      );
-                    })}
+                        );
+                      });
+                    })()}
                   </View>
                 </>
               )}
             </View>
           </View>
 
-          {/* Recent Activity */}
+          {/* All Activities */}
           <View style={styles.sectionContainer}>
             <View style={styles.sectionHeader}>
-              <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>Recent Activity</ThemedText>
+              <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>All Activities</ThemedText>
               <TouchableOpacity
                 onPress={() => router.push('/(tabs)/transactions')}
                 style={styles.cleanSectionAction}
@@ -376,48 +566,163 @@ export default function HomeScreen() {
             </View>
 
             <View style={styles.activityList}>
-              {recentTxs.length === 0 ? (
+              {recentActivities.length === 0 ? (
                 <View style={styles.emptyBox}>
                   <Ionicons name="receipt-outline" size={32} color={colors.borderSubtle} />
-                  <ThemedText style={[styles.emptyText, { color: colors.textMuted }]}>No transactions yet</ThemedText>
+                  <ThemedText style={[styles.emptyText, { color: colors.textMuted }]}>No recent activity yet</ThemedText>
                   <TouchableOpacity
                     style={styles.emptyAction}
                     onPress={() => router.push('/add-transaction')}
                   >
-                    <ThemedText style={[styles.emptyActionText, { color: colors.primary }]}>+ Add your first transaction</ThemedText>
+                    <ThemedText style={[styles.emptyActionText, { color: colors.primary }]}>+ Add your first transaction or loan</ThemedText>
                   </TouchableOpacity>
                 </View>
               ) : (
-                recentTxs.map((tx) => {
-                  const meta = getCategoryMeta(tx.category_id, categories);
-                  const title = tx.note || getCategoryDisplayName(tx.category_id, categories);
-                  return (
-                    <TouchableOpacity
-                      key={tx.id}
-                      style={[styles.activityItem, { backgroundColor: colors.surface, borderColor: colors.borderSubtle, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.2 : 0.04 }]}
-                      onPress={() => {
-                        setSelectedTxForEdit(tx);
-                        setEditModalVisible(true);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.activityIconCircle, { backgroundColor: meta.color + '20' }]}>
-                        <Ionicons name={meta.icon} size={20} color={meta.color} />
-                      </View>
-                      <View style={styles.activityDetails}>
-                        <ThemedText style={[styles.activityTitle, { color: colors.text }]}>{title}</ThemedText>
-                        <ThemedText style={[styles.activityMeta, { color: colors.textSecondary }]}>
-                          {accountMap[tx.account_id] ?? 'Account'} • {formatDate(tx.date, 'short')}
-                        </ThemedText>
-                      </View>
-                      <View style={{ alignItems: 'flex-end', marginRight: 4 }}>
-                        <ThemedText style={[styles.activityAmount, { color: tx.type === 'income' ? colors.income : colors.expense }]}>
-                          {tx.type === 'income' ? '+' : '-'}PKR {tx.amount.toLocaleString()}
-                        </ThemedText>
-                      </View>
-                      <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />
-                    </TouchableOpacity>
-                  );
+                recentActivities.map((item) => {
+                  if (item.kind === 'transaction') {
+                    const tx = item.data;
+                    const isTransfer = tx.type === 'transfer';
+                    const meta = isTransfer
+                      ? { icon: 'swap-horizontal' as const, color: '#0EA5E9' }
+                      : tx.category_id
+                      ? getCategoryMeta(tx.category_id, categories)
+                      : { icon: 'pricetag-outline' as const, color: colors.primary };
+                    const categoryName = isTransfer
+                      ? 'Transfer'
+                      : tx.category_id
+                      ? getCategoryDisplayName(tx.category_id, categories)
+                      : 'General';
+                    const hasNote = Boolean(tx.note && tx.note.trim());
+
+                    return (
+                      <TouchableOpacity
+                        key={`tx-${tx.id}`}
+                        style={[
+                          styles.activityItem,
+                          {
+                            backgroundColor: colors.surface,
+                            borderColor: isDark ? colors.borderSubtle : colors.border,
+                            shadowColor: colors.cardShadow,
+                            shadowOpacity: isDark ? 0.2 : 0.04,
+                          },
+                        ]}
+                        onPress={() => {
+                          setSelectedTxForEdit(tx);
+                          setEditModalVisible(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.activityIconCircle, { backgroundColor: meta.color + '20' }]}>
+                          <Ionicons name={meta.icon} size={20} color={meta.color} />
+                        </View>
+                        <View style={styles.activityDetails}>
+                          <ThemedText style={[styles.activityTitle, { color: colors.text }]} numberOfLines={1}>
+                            {categoryName}
+                          </ThemedText>
+                          {hasNote ? (
+                            <ThemedText style={[styles.activityNoteSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {tx.note}
+                            </ThemedText>
+                          ) : null}
+                          <View style={styles.activityMetaRow}>
+                            <ThemedText style={[styles.activityMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {isTransfer
+                                ? `${accountMap[tx.account_id] ?? 'Account'} ➔ ${accountMap[tx.to_account_id || ''] ?? 'Cash Wallet'} • ${formatDate(tx.date, 'short')}`
+                                : `${accountMap[tx.account_id] ?? 'Account'} • ${formatDate(tx.date, 'short')}`}
+                            </ThemedText>
+                          </View>
+                        </View>
+                        <View style={styles.activityAmountContainer}>
+                          <ThemedText
+                            style={[
+                              styles.activityAmount,
+                              {
+                                color: isTransfer
+                                  ? '#0EA5E9'
+                                  : tx.type === 'income'
+                                  ? colors.income
+                                  : colors.expense,
+                              },
+                            ]}
+                          >
+                            {isTransfer
+                              ? `${sym} ${tx.amount.toLocaleString()}`
+                              : tx.type === 'income'
+                              ? `${sym} +${tx.amount.toLocaleString()}`
+                              : `${sym} -${tx.amount.toLocaleString()}`}
+                          </ThemedText>
+                        </View>
+                        <Ionicons name="chevron-forward" size={14} color={colors.textMuted} style={{ marginLeft: 6 }} />
+                      </TouchableOpacity>
+                    );
+                  } else {
+                    const loan = item.data;
+                    const isLent = loan.type === 'lent';
+                    const accentColor = isLent ? '#F59E0B' : '#8B5CF6';
+                    const statusColor =
+                      loan.status === 'paid' ? colors.income : loan.status === 'partially_paid' ? colors.primary : '#F59E0B';
+                    const statusLabel =
+                      loan.status === 'paid' ? 'PAID' : loan.status === 'partially_paid' ? 'PARTIALLY PAID' : 'PENDING';
+                    const remaining = Math.max(0, loan.amount - (loan.paid_amount || 0));
+
+                    return (
+                      <TouchableOpacity
+                        key={`loan-${loan.id}`}
+                        style={[
+                          styles.activityItem,
+                          {
+                            backgroundColor: colors.surface,
+                            borderColor: isDark ? colors.borderSubtle : colors.border,
+                            shadowColor: colors.cardShadow,
+                            shadowOpacity: isDark ? 0.2 : 0.04,
+                          },
+                        ]}
+                        onPress={() => {
+                          setSelectedLoanForDetails(loan);
+                          setLoanDetailsModalVisible(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.activityIconCircle, { backgroundColor: accentColor + '20' }]}>
+                          <Ionicons name={isLent ? 'arrow-up-circle' : 'arrow-down-circle'} size={22} color={accentColor} />
+                        </View>
+                        <View style={styles.activityDetails}>
+                          <ThemedText style={[styles.activityTitle, { color: colors.text }]} numberOfLines={1}>
+                            {isLent ? `Lent to ${loan.person_name}` : `Borrowed from ${loan.person_name}`}
+                          </ThemedText>
+                          {loan.note && loan.note.trim() ? (
+                            <ThemedText style={[styles.activityNoteSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {loan.note}
+                            </ThemedText>
+                          ) : null}
+                          <View style={styles.activityMetaRow}>
+                            <View style={[styles.statusMiniBadge, { backgroundColor: statusColor + '20' }]}>
+                              <ThemedText style={[styles.statusMiniText, { color: statusColor }]}>{statusLabel}</ThemedText>
+                            </View>
+                            <View style={[styles.loanTypeBadge, { backgroundColor: accentColor + '18' }]}>
+                              <ThemedText style={[styles.loanTypeBadgeText, { color: accentColor }]}>
+                                {isLent ? 'Lent' : 'Borrowed'}
+                              </ThemedText>
+                            </View>
+                            <ThemedText style={[styles.activityMeta, { color: colors.textSecondary }]} numberOfLines={1}>
+                              {accountMap[loan.account_id] ?? 'Account'} • {formatDate(loan.date, 'short')}
+                            </ThemedText>
+                          </View>
+                        </View>
+                        <View style={styles.activityAmountContainer}>
+                          <ThemedText style={[styles.activityAmount, { color: accentColor }]}>
+                            {sym} {loan.amount.toLocaleString()}
+                          </ThemedText>
+                          {loan.status === 'partially_paid' && (
+                            <ThemedText style={[styles.remainingSubText, { color: colors.textMuted }]}>
+                              Rem: {sym} {remaining.toLocaleString()}
+                            </ThemedText>
+                          )}
+                        </View>
+                        <Ionicons name="chevron-forward" size={14} color={colors.textMuted} style={{ marginLeft: 6 }} />
+                      </TouchableOpacity>
+                    );
+                  }
                 })
               )}
             </View>
@@ -454,6 +759,16 @@ export default function HomeScreen() {
           setSelectedTxForEdit(null);
         }}
       />
+
+      {/* Loan Details & Repayments Modal */}
+      <LoanDetailsModal
+        visible={loanDetailsModalVisible}
+        loan={selectedLoanForDetails}
+        onClose={() => {
+          setLoanDetailsModalVisible(false);
+          setSelectedLoanForDetails(null);
+        }}
+      />
     </View>
   );
 }
@@ -461,7 +776,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
-  scrollContent: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm, paddingBottom: 100 },
+  scrollContent: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm, paddingBottom: 150 },
 
   // Header
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md },
@@ -502,15 +817,65 @@ const styles = StyleSheet.create({
   cleanSectionAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 2 },
   cleanSectionActionText: { fontSize: 13, fontWeight: '700' },
 
+  // Loan summary bar
+  loanSummaryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  loanSummaryItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs + 2,
+  },
+  loanSummaryLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  loanSummaryValue: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
   // Accounts Horizontal Carousel
-  accountScrollList: { gap: Spacing.sm, paddingRight: Spacing.md },
-  accountOverviewCard: { width: 148, borderRadius: Radius.xl, padding: Spacing.md, borderWidth: 1, justifyContent: 'space-between', shadowOffset: { width: 0, height: 2 }, shadowRadius: 6, elevation: 2 },
+  accountScroll: { overflow: 'visible', marginHorizontal: -Spacing.xl },
+  accountScrollList: {
+    gap: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
+  },
+  accountOverviewCard: {
+    minWidth: 165,
+    borderRadius: Radius.xl,
+    padding: Spacing.base,
+    borderWidth: 1,
+    justifyContent: 'space-between',
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 8,
+    elevation: 3,
+  },
   accountCardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
-  accountIconCircle: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  accountIconCircle: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   accountTypeBadge: { fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   accountCardName: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
   accountCardBal: { fontSize: 14, fontWeight: '800', letterSpacing: -0.2 },
-  accountAddCard: { width: 124, borderRadius: Radius.xl, padding: Spacing.md, borderWidth: 1.5, borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs },
+  accountAddCard: {
+    width: 135,
+    borderRadius: Radius.xl,
+    padding: Spacing.base,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+  },
   accountAddCircle: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   accountAddText: { fontSize: 12, fontWeight: '700', textAlign: 'center' },
 
@@ -529,12 +894,103 @@ const styles = StyleSheet.create({
 
   // Activity
   activityList: { gap: Spacing.sm },
-  activityItem: { flexDirection: 'row', alignItems: 'center', borderRadius: Radius.xl, padding: Spacing.md, borderWidth: 1, shadowOffset: { width: 0, height: 2 }, shadowRadius: 5, elevation: 2 },
-  activityIconCircle: { width: 42, height: 42, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.md },
-  activityDetails: { flex: 1 },
-  activityTitle: { fontSize: 14, fontWeight: '600', marginBottom: 2 },
-  activityMeta: { fontSize: 11 },
-  activityAmount: { fontSize: 14, fontWeight: '700' },
+  activityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: Radius.xl,
+    padding: Spacing.md,
+    borderWidth: 1,
+    overflow: 'hidden',
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  activityIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: Radius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+    flexShrink: 0,
+  },
+  activityDetails: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: Spacing.xs,
+  },
+  activityTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+    flexShrink: 1,
+  },
+  activityHeaderBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginBottom: 2,
+  },
+  loanTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Radius.xs,
+  },
+  loanTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  activityNoteSub: {
+    fontSize: 11,
+    marginBottom: 3,
+    flexShrink: 1,
+  },
+  activityMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 2,
+  },
+  inlineCategoryPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: Radius.xs,
+  },
+  inlineCategoryText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  statusMiniBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: Radius.xs,
+  },
+  statusMiniText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  activityMeta: {
+    fontSize: 11,
+    flexShrink: 1,
+  },
+  activityAmountContainer: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+    marginLeft: Spacing.xs,
+    maxWidth: '38%',
+  },
+  activityAmount: {
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  remainingSubText: {
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '500',
+  },
 
   // Empty state
   emptyBox: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },

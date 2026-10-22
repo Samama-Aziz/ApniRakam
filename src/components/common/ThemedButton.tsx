@@ -92,7 +92,8 @@ export function ThemedButton({
       backgroundColor: bg,
       borderColor: border,
       borderWidth,
-      height,
+      minHeight: height,
+      paddingVertical: Spacing.sm,
       paddingHorizontal: paddingH,
       borderRadius,
       alignSelf: fullWidth ? 'stretch' : 'auto',
@@ -143,7 +144,7 @@ export function ThemedButton({
           {icon && <View style={styles.iconLeft}>{icon}</View>}
           <ThemedText
             variant={getTypographyVariant()}
-            style={[{ color: getTextColor() }, textStyle]}
+            style={[{ color: getTextColor(), textAlign: 'center' }, textStyle]}
           >
             {title}
           </ThemedText>
@@ -164,6 +165,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 1,
   },
   iconLeft: {
     marginRight: Spacing.sm,

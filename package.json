@@ -1,7 +1,7 @@
 {
   "name": "apnirakam",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.0.01",
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "expo": "~57.0.26",

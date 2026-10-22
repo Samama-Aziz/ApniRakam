@@ -1,5 +1,15 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
-import { CREATE_ACCOUNTS_TABLE, CREATE_BUDGETS_TABLE, CREATE_CATEGORIES_TABLE, CREATE_INDEXES, CREATE_TRANSACTIONS_TABLE, DATABASE_VERSION } from './schema';
+import {
+  CREATE_ACCOUNTS_TABLE,
+  CREATE_BUDGETS_TABLE,
+  CREATE_CATEGORIES_TABLE,
+  CREATE_BASE_INDEXES,
+  CREATE_LOAN_INDEXES,
+  CREATE_TRANSACTIONS_TABLE,
+  CREATE_LOANS_TABLE,
+  CREATE_LOAN_REPAYMENTS_TABLE,
+  DATABASE_VERSION,
+} from './schema';
 
 const timestamp = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -24,7 +34,7 @@ async function migratePrototypeSchema(database: SQLiteDatabase): Promise<void> {
   await database.execAsync('PRAGMA foreign_keys = OFF;');
   try {
     for (const table of legacyTables) await database.execAsync(`ALTER TABLE ${table} RENAME TO ${table}_legacy_v0;`);
-    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_INDEXES}`);
+    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_BASE_INDEXES}`);
 
     if (legacyTables.includes('accounts')) await database.execAsync(`
       INSERT OR IGNORE INTO accounts (id, name, type, currency, opening_balance, is_active, created_at, updated_at)
@@ -58,7 +68,7 @@ export async function runMigrations(database: SQLiteDatabase): Promise<void> {
   let currentVersion = version?.user_version ?? 0;
   if (currentVersion < 1) {
     await migratePrototypeSchema(database);
-    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_INDEXES}`);
+    await database.execAsync(`${CREATE_ACCOUNTS_TABLE}${CREATE_CATEGORIES_TABLE}${CREATE_TRANSACTIONS_TABLE}${CREATE_BUDGETS_TABLE}${CREATE_BASE_INDEXES}`);
     currentVersion = 1;
   }
   if (currentVersion < 2 && await tableExists(database, 'transactions')) {
@@ -71,6 +81,47 @@ export async function runMigrations(database: SQLiteDatabase): Promise<void> {
     }
     currentVersion = 2;
   }
+  if (currentVersion < 3 && await tableExists(database, 'categories')) {
+    const categoryColumns = await columnsFor(database, 'categories');
+    if (!categoryColumns.includes('color')) {
+      await database.execAsync('ALTER TABLE categories ADD COLUMN color TEXT;');
+    }
+    currentVersion = 3;
+  }
+  if (currentVersion < 4) {
+    await database.execAsync(`${CREATE_LOANS_TABLE}${CREATE_LOAN_REPAYMENTS_TABLE}${CREATE_LOAN_INDEXES}`);
+    currentVersion = 4;
+  }
+  if (currentVersion < 5) {
+    if (await tableExists(database, 'transactions')) {
+      const transactionColumns = await columnsFor(database, 'transactions');
+      if (!transactionColumns.includes('to_account_id')) {
+        await database.execAsync('PRAGMA foreign_keys = OFF;');
+        try {
+          await database.execAsync('ALTER TABLE transactions RENAME TO transactions_v4;');
+          await database.execAsync(CREATE_TRANSACTIONS_TABLE);
+          await database.execAsync(`
+            INSERT OR IGNORE INTO transactions (id, type, amount, account_id, to_account_id, category_id, date, note, created_at, updated_at, deleted_at)
+            SELECT id, type, amount, account_id, NULL, category_id, date, note, created_at, updated_at, deleted_at FROM transactions_v4;
+          `);
+          await database.execAsync('DROP TABLE transactions_v4;');
+        } finally {
+          await database.execAsync('PRAGMA foreign_keys = ON;');
+        }
+      }
+    }
+    currentVersion = 5;
+  }
+
+  // Fail-safe: ensure all current schema tables and indexes exist regardless of prior state
+  if (!(await tableExists(database, 'loans'))) {
+    await database.execAsync(CREATE_LOANS_TABLE);
+  }
+  if (!(await tableExists(database, 'loan_repayments'))) {
+    await database.execAsync(CREATE_LOAN_REPAYMENTS_TABLE);
+  }
+  await database.execAsync(`${CREATE_BASE_INDEXES}${CREATE_LOAN_INDEXES}`);
+
   if (currentVersion > DATABASE_VERSION) throw new Error(`Database version ${currentVersion} is newer than this app supports.`);
   await database.execAsync(`PRAGMA user_version = ${DATABASE_VERSION}`);
 }

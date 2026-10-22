@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -19,6 +19,7 @@ import ThemedText from '@/components/common/ThemedText';
 import ThemedButton from '@/components/common/ThemedButton';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
+import { useKeyboard } from '@/hooks/useKeyboard';
 import { budgetRepository } from '@/database';
 import type { BudgetRecord, CategoryRecord } from '@/database/repositories/types';
 import { formatCurrency } from '@/utils/formatters';
@@ -60,6 +61,25 @@ interface BudgetSheetProps {
 
 function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, currencySymbol }: BudgetSheetProps) {
   const { colors, isDark } = useTheme();
+  const { keyboardHeight, isKeyboardVisible } = useKeyboard();
+  const scrollRef = useRef<ScrollView>(null);
+  const [isAmountFocused, setIsAmountFocused] = useState(false);
+
+  React.useEffect(() => {
+    if (isKeyboardVisible && isAmountFocused) {
+      const t1 = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      const t2 = setTimeout(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }, 280);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [isKeyboardVisible, isAmountFocused]);
+
   const expenseCategories = useMemo(() => {
     const list = categories.filter((c) => c.type === 'expense');
     return sortCategoriesOthersLast(list.length > 0 ? list : [
@@ -69,12 +89,14 @@ function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, cu
 
   const isEditMode = !!existingBudget;
 
+  const { defaultBudgetPeriod, defaultCategoryId } = useAppStore();
+  const resolvedPeriod: BudgetPeriod = defaultBudgetPeriod === 'weekly' ? 'weekly' : 'monthly';
   const [selectedCat, setSelectedCat] = useState('');
   const [amount, setAmount] = useState('');
-  const [period, setPeriod] = useState<BudgetPeriod>('monthly');
+  const [period, setPeriod] = useState<BudgetPeriod>(resolvedPeriod);
   const [saving, setSaving] = useState(false);
 
-  // Seed values from existingBudget when editing
+  // Seed values from existingBudget when editing, or use defaults
   React.useEffect(() => {
     if (visible) {
       if (existingBudget) {
@@ -83,20 +105,16 @@ function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, cu
         setPeriod((existingBudget.period as BudgetPeriod) || 'monthly');
       } else {
         setAmount('');
-        setPeriod('monthly');
-        if (expenseCategories.length > 0 && !selectedCat) {
+        setPeriod(resolvedPeriod);
+        const defaultMatch = expenseCategories.find((c) => c.id === defaultCategoryId);
+        if (defaultMatch) {
+          setSelectedCat(defaultMatch.id);
+        } else if (expenseCategories.length > 0) {
           setSelectedCat(expenseCategories[0].id);
         }
       }
     }
-  }, [visible, existingBudget]);
-
-  // Default select first category on open when creating
-  React.useEffect(() => {
-    if (!isEditMode && expenseCategories.length > 0 && !selectedCat) {
-      setSelectedCat(expenseCategories[0].id);
-    }
-  }, [expenseCategories]);
+  }, [visible, existingBudget, defaultBudgetPeriod, defaultCategoryId, expenseCategories]);
 
   const buildDates = (p: BudgetPeriod) => {
     const now = new Date();
@@ -168,10 +186,14 @@ function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, cu
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent presentationStyle="overFullScreen" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent presentationStyle="overFullScreen" onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={ms.outerWrap}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 0}
+        style={[
+          ms.outerWrap,
+          Platform.OS === 'android' && isKeyboardVisible && { paddingBottom: keyboardHeight },
+        ]}
       >
         <TouchableOpacity style={ms.backdrop} activeOpacity={1} onPress={onClose} />
         <View style={[ms.sheet, { backgroundColor: colors.surface, borderColor: colors.borderSubtle }]}>
@@ -195,9 +217,15 @@ function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, cu
           </View>
 
           <ScrollView
+            ref={scrollRef}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={ms.scrollContent}
+            contentContainerStyle={[
+              ms.scrollContent,
+              isKeyboardVisible && { paddingBottom: 40 },
+            ]}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           >
             {/* Category Picker — only in create mode */}
             {!isEditMode && (
@@ -256,6 +284,16 @@ function BudgetSheet({ visible, onClose, onSaved, categories, existingBudget, cu
               <TextInput
                 value={amount}
                 onChangeText={setAmount}
+                onFocus={() => {
+                  setIsAmountFocused(true);
+                  setTimeout(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
+                  setTimeout(() => {
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }, 280);
+                }}
+                onBlur={() => setIsAmountFocused(false)}
                 keyboardType="numeric"
                 placeholder="0"
                 placeholderTextColor={colors.textTertiary}
@@ -313,7 +351,7 @@ export default function BudgetsScreen() {
   const spentByCat = useMemo(() => {
     const map: Record<string, number> = {};
     for (const tx of transactions) {
-      if (tx.type !== 'expense') continue;
+      if (tx.type !== 'expense' || !tx.category_id) continue;
       const d = new Date(tx.date);
       if (d < start || d > end) continue;
       map[tx.category_id] = (map[tx.category_id] ?? 0) + tx.amount;
@@ -429,15 +467,13 @@ export default function BudgetsScreen() {
               </View>
 
               <ThemedText variant="amountLarge" style={[styles.remainingAmount, { color: colors.text }, totalRemaining < 0 && { color: colors.expense }]}>
-                {totalRemaining < 0
-                  ? `-${sym} ${Math.abs(totalRemaining).toLocaleString()}`
-                  : formatCurrency(totalRemaining, { symbol: sym })}
+                {formatCurrency(totalRemaining, { symbol: sym })}
               </ThemedText>
               <ThemedText style={[styles.budgetSubText, { color: colors.textSecondary }]}>
                 Spent {formatCurrency(totalSpent, { symbol: sym })} of {formatCurrency(totalLimit, { symbol: sym })}
               </ThemedText>
 
-              <View style={[styles.overallProgressBarBg, { backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7' }]}>
+              <View style={[styles.overallProgressBarBg, { backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted }]}>
                 <View
                   style={[
                     styles.overallProgressBarFill,
@@ -514,7 +550,7 @@ export default function BudgetsScreen() {
                       </View>
                     </View>
 
-                    <View style={[styles.itemProgressBarBg, { backgroundColor: isDark ? colors.backgroundSecondary : '#EDF2F7' }]}>
+                    <View style={[styles.itemProgressBarBg, { backgroundColor: isDark ? colors.backgroundSecondary : colors.surfaceMuted }]}>
                       <View
                         style={[
                           styles.itemProgressBarFill,
