@@ -2,7 +2,7 @@
   "expo": {
     "name": "ApniRakam",
     "slug": "ApniRakam",
-    "version": "1.0.01",
+    "version": "1.0.02",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "apnirakam",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.apnirakam.app",
-      "versionCode": 4,
+      "versionCode": 5,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#042F1E",
@@ -42,7 +42,8 @@
       ],
       "expo-sqlite",
       "expo-secure-store",
-      "./plugins/withCMakeVersion"
+      "./plugins/withCMakeVersion",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true

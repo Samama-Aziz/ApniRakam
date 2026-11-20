@@ -10,11 +10,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Spacing, Radius } from '@/constants/theme';
 import ThemedText from '@/components/common/ThemedText';
-import { CustomAlert } from '@/components/common/CustomAlert';
+import { CustomAlert, type AlertButton } from '@/components/common/CustomAlert';
 import { useAppStore } from '@/store/useAppStore';
 import { useTheme } from '@/hooks/useTheme';
+import { useRouter } from 'expo-router';
 import { formatCurrency } from '@/utils/formatters';
 import { getCategoryMeta, getCategoryDisplayName } from '@/utils/categoryMeta';
+import { exportMonthlyReportCSV, exportTransactionsCSV } from '@/services/backupService';
 
 function monthBounds(date: Date) {
   const start = new Date(date.getFullYear(), date.getMonth(), 1);
@@ -33,9 +35,19 @@ function formatCompact(value: number): string {
 }
 
 export default function ReportsScreen() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<'overview' | 'breakdown'>('overview');
   const [monthOffset, setMonthOffset] = useState(0);
-  const [showSummaryAlert, setShowSummaryAlert] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{
+    visible: boolean;
+    title: string;
+    message?: string;
+    type?: 'default' | 'destructive' | 'warning' | 'info' | 'success';
+    buttons?: AlertButton[];
+    buttonLayout?: 'row' | 'column';
+  }>({ visible: false, title: '' });
+
   const { transactions, categories, currencySymbol, currency } = useAppStore();
   const sym = currencySymbol || currency || 'PKR';
   const { colors, isDark } = useTheme();
@@ -93,7 +105,98 @@ export default function ReportsScreen() {
   }, [monthTxs]);
 
   const handleExport = () => {
-    setShowSummaryAlert(true);
+    setAlertConfig({
+      visible: true,
+      title: 'Export Financial Report',
+      message: `Export data for ${monthLabel(selectedDate)} (${monthTxs.length} transactions) or export all-time transaction records in CSV spreadsheet format.`,
+      type: 'info',
+      buttonLayout: 'column',
+      buttons: [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: `Export ${monthLabel(selectedDate)} (CSV)`,
+          style: 'default',
+          onPress: async () => {
+            setIsExporting(true);
+            try {
+              const res = await exportMonthlyReportCSV({
+                monthLabel: monthLabel(selectedDate),
+                startDate: start,
+                endDate: end,
+                currencySymbol: sym,
+              });
+              if (res.success) {
+                setAlertConfig({
+                  visible: true,
+                  title: 'Report Exported',
+                  message: `Successfully exported ${monthLabel(selectedDate)} financial report (${res.count ?? 0} transactions) to CSV spreadsheet.\n\nFile: ${res.fileName}`,
+                  type: 'success',
+                  buttons: [{ text: 'Done' }],
+                });
+              } else {
+                setAlertConfig({
+                  visible: true,
+                  title: 'Export Failed',
+                  message: res.error || 'Could not export monthly report.',
+                  type: 'destructive',
+                  buttons: [{ text: 'OK' }],
+                });
+              }
+            } catch (err: any) {
+              setAlertConfig({
+                visible: true,
+                title: 'Export Error',
+                message: err?.message || 'Failed to export monthly report.',
+                type: 'destructive',
+                buttons: [{ text: 'OK' }],
+              });
+            } finally {
+              setIsExporting(false);
+            }
+          },
+        },
+        {
+          text: 'Export All Transactions (CSV)',
+          style: 'default',
+          onPress: async () => {
+            setIsExporting(true);
+            try {
+              const res = await exportTransactionsCSV();
+              if (res.success) {
+                setAlertConfig({
+                  visible: true,
+                  title: 'Data Exported',
+                  message: `Successfully exported all transaction records (${res.count ?? 0} items) to CSV spreadsheet.\n\nFile: ${res.fileName}`,
+                  type: 'success',
+                  buttons: [{ text: 'Done' }],
+                });
+              } else {
+                setAlertConfig({
+                  visible: true,
+                  title: 'Export Failed',
+                  message: res.error || 'Could not export transactions.',
+                  type: 'destructive',
+                  buttons: [{ text: 'OK' }],
+                });
+              }
+            } catch (err: any) {
+              setAlertConfig({
+                visible: true,
+                title: 'Export Error',
+                message: err?.message || 'Failed to export transactions.',
+                type: 'destructive',
+                buttons: [{ text: 'OK' }],
+              });
+            } finally {
+              setIsExporting(false);
+            }
+          },
+        },
+      ],
+    });
   };
 
   return (
@@ -104,14 +207,33 @@ export default function ReportsScreen() {
         {/* Header */}
         <View style={styles.header}>
           <ThemedText style={[styles.headerTitle, { color: colors.text }]}>Financial Reports</ThemedText>
-          <TouchableOpacity
-            style={styles.headerActionBtn}
-            onPress={handleExport}
-            activeOpacity={0.7}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="download-outline" size={22} color={colors.primary} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              style={[
+                styles.headerActionBtn,
+                { backgroundColor: colors.surface, borderColor: colors.borderSubtle },
+              ]}
+              onPress={() => router.push('/reports/spending-by-category')}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Spending by Category Report"
+            >
+              <Ionicons name="pie-chart-outline" size={19} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.headerActionBtn,
+                { backgroundColor: colors.surface, borderColor: colors.borderSubtle },
+              ]}
+              onPress={handleExport}
+              disabled={isExporting}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Export Financial Reports"
+            >
+              <Ionicons name="download-outline" size={19} color={colors.primary} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Month Navigator */}
@@ -244,8 +366,17 @@ export default function ReportsScreen() {
             <>
               {/* Category Breakdown */}
               <View style={styles.sectionHeader}>
-                <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>Expense Breakdown</ThemedText>
-                <ThemedText style={[styles.sectionSub, { color: colors.textSecondary }]}>{categoryBreakdown.length} categories</ThemedText>
+                <View>
+                  <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>Expense Breakdown</ThemedText>
+                  <ThemedText style={[styles.sectionSub, { color: colors.textSecondary }]}>{categoryBreakdown.length} categories this month</ThemedText>
+                </View>
+                <TouchableOpacity
+                  onPress={() => router.push('/reports/spending-by-category')}
+                  style={styles.allTimeLinkBtn}
+                  activeOpacity={0.7}
+                >
+                  <ThemedText style={[styles.allTimeLinkText, { color: colors.primary }]}>All-Time Report →</ThemedText>
+                </TouchableOpacity>
               </View>
 
               {categoryBreakdown.length === 0 ? (
@@ -297,14 +428,15 @@ export default function ReportsScreen() {
         </ScrollView>
       </SafeAreaView>
 
-      {/* Custom ApniRakam Monthly Report Summary Alert */}
+      {/* Custom alert dialog */}
       <CustomAlert
-        visible={showSummaryAlert}
-        type="info"
-        title="Monthly Report Summary"
-        message={`Period: ${monthLabel(selectedDate)}\n\n• Income: ${sym} ${income.toLocaleString()}\n• Expenses: ${sym} ${expense.toLocaleString()}\n• Net Savings: ${sym} ${netSavings.toLocaleString()} (${savingsRate}%)\n• Total Transactions: ${monthTxs.length}`}
-        buttons={[{ text: 'Close', style: 'default' }]}
-        onClose={() => setShowSummaryAlert(false)}
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        buttons={alertConfig.buttons}
+        buttonLayout={alertConfig.buttonLayout}
+        onClose={() => setAlertConfig((c) => ({ ...c, visible: false }))}
       />
     </View>
   );
@@ -316,7 +448,7 @@ const styles = StyleSheet.create({
 
   header:            { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md },
   headerTitle:       { fontSize: 24, fontWeight: '800' },
-  headerActionBtn:   { padding: 8, alignItems: 'center', justifyContent: 'center' },
+  headerActionBtn:   { width: 38, height: 38, borderRadius: Radius.lg, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 
   monthNavContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: Radius.full, borderWidth: 1, paddingHorizontal: Spacing.sm, paddingVertical: 4, marginHorizontal: Spacing.xl, marginBottom: Spacing.md, shadowOffset: { width: 0, height: 1 }, shadowRadius: 3, elevation: 1 },
   monthNavBtn:       { width: 32, height: 32, borderRadius: Radius.full, alignItems: 'center', justifyContent: 'center' },
@@ -380,4 +512,14 @@ const styles = StyleSheet.create({
   emptyBox:          { alignItems: 'center', paddingVertical: Spacing['3xl'], gap: Spacing.sm },
   emptyTitle:        { fontSize: 16, fontWeight: '700' },
   emptyText:         { fontSize: 13, textAlign: 'center', paddingHorizontal: Spacing.xl },
+
+  allTimeLinkBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  allTimeLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
 });
+

@@ -24,6 +24,7 @@ export interface CustomAlertProps {
   message?: string;
   type?: 'destructive' | 'warning' | 'info' | 'success' | 'default';
   buttons?: AlertButton[];
+  buttonLayout?: 'row' | 'column';
   onClose: () => void;
   /**
    * Set to true when rendering inside an existing Modal to avoid
@@ -38,6 +39,7 @@ export function CustomAlert({
   message,
   type = 'default',
   buttons = [{ text: 'OK', style: 'default' }],
+  buttonLayout,
   onClose,
   isInsideModal = false,
 }: CustomAlertProps) {
@@ -85,6 +87,8 @@ export function CustomAlert({
     }
   };
 
+  const isColumn = buttonLayout ? buttonLayout === 'column' : (buttons.length === 1 || buttons.length > 2);
+
   const content = (
     <View style={styles.overlay}>
       <TouchableWithoutFeedback onPress={onClose}>
@@ -120,7 +124,7 @@ export function CustomAlert({
         )}
 
         {/* Action Buttons */}
-        <View style={[styles.buttonRow, buttons.length === 1 && styles.buttonColumn]}>
+        <View style={[styles.buttonRow, isColumn && styles.buttonColumn]}>
           {buttons.map((btn, index) => {
             const isDestructive = btn.style === 'destructive';
             const isCancel = btn.style === 'cancel';
@@ -149,7 +153,7 @@ export function CustomAlert({
                 onPress={() => handleButtonPress(btn)}
                 style={[
                   styles.btn,
-                  buttons.length > 1 && styles.btnFlex,
+                  !isColumn && styles.btnFlex,
                   {
                     backgroundColor: btnBg,
                     borderWidth,

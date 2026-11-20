@@ -66,8 +66,10 @@ export default {
   restoreDefaults,
 };
 
+export { getDatabase } from './database';
 export { accountRepository } from './repositories/accountRepository';
 export { budgetRepository } from './repositories/budgetRepository';
 export { categoryRepository } from './repositories/categoryRepository';
 export { transactionRepository } from './repositories/transactionRepository';
 export { loanRepository } from './repositories/loanRepository';
+

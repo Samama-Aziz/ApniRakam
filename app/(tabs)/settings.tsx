@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StatusBar,
   TextInput,
-  Alert,
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +19,17 @@ import { getCategoryMeta } from '@/utils/categoryMeta';
 import { restoreDefaults } from '@/database';
 import Constants from 'expo-constants';
 import CustomAlert, { type AlertButton } from '@/components/common/CustomAlert';
+import {
+  exportTransactionsCSV,
+  exportSampleCSV,
+  parseTransactionsCSV,
+  importTransactionsCSV,
+  exportAppData,
+  pickBackupFile,
+  validateBackupContent,
+  restoreAppData,
+} from '@/services/backupService';
+
 
 const CURRENCY_LIST = Object.values(SUPPORTED_CURRENCIES);
 const BUDGET_PERIODS: { key: 'monthly' | 'weekly' | 'custom'; label: string; icon: string }[] = [
@@ -85,7 +95,7 @@ function SettingRow({
 
 export default function SettingsScreen() {
   const { colors, isDark } = useTheme();
-  const appVersion = Constants.expoConfig?.version ?? '1.0.01';
+  const appVersion = Constants.expoConfig?.version ?? '1.0.02';
 
   const {
     userName, currency, currencySymbol,
@@ -97,6 +107,10 @@ export default function SettingsScreen() {
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState(userName);
+  const [isExportingCSV, setIsExportingCSV] = useState(false);
+  const [isExportingSample, setIsExportingSample] = useState(false);
+  const [isExportingJSON, setIsExportingJSON] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Custom alert dialog state
   const [alertConfig, setAlertConfig] = useState<{
@@ -105,6 +119,7 @@ export default function SettingsScreen() {
     message?: string;
     type?: 'default' | 'destructive' | 'warning' | 'info' | 'success';
     buttons?: AlertButton[];
+    buttonLayout?: 'row' | 'column';
   }>({ visible: false, title: '' });
 
   // Sort categories: "Other/Others" always last
@@ -114,6 +129,410 @@ export default function SettingsScreen() {
     const trimmed = nameInput.trim();
     if (trimmed) await setUserName(trimmed);
     setEditingName(false);
+  };
+
+  const handleExportCSV = async () => {
+    setIsExportingCSV(true);
+    try {
+      const result = await exportTransactionsCSV();
+      if (result.success) {
+        setAlertConfig({
+          visible: true,
+          title: 'CSV Export Ready',
+          message: `Your transactions spreadsheet has been prepared and shared (${result.count ?? 0} records).\n\nFile: ${result.fileName || 'ApniRakam_Transactions.csv'}`,
+          type: 'success',
+          buttons: [{ text: 'Done' }],
+        });
+      } else {
+        setAlertConfig({
+          visible: true,
+          title: 'Export Failed',
+          message: result.error || 'Could not export transactions to CSV. Please try again.',
+          type: 'destructive',
+          buttons: [{ text: 'OK' }],
+        });
+      }
+    } catch (e: any) {
+      setAlertConfig({
+        visible: true,
+        title: 'Export Error',
+        message: e?.message || 'An unexpected error occurred during CSV export.',
+        type: 'destructive',
+        buttons: [{ text: 'OK' }],
+      });
+    } finally {
+      setIsExportingCSV(false);
+    }
+  };
+
+  const handleExportSampleCSV = async () => {
+    setIsExportingSample(true);
+    try {
+      const result = await exportSampleCSV();
+      if (result.success) {
+        setAlertConfig({
+          visible: true,
+          title: 'Sample CSV Ready',
+          message: 'The sample CSV template has been generated and shared.\n\nYou can open it in Excel, Google Sheets, or any spreadsheet viewer to prepare transactions for import.',
+          type: 'info',
+          buttons: [{ text: 'Got it' }],
+        });
+      } else {
+        setAlertConfig({
+          visible: true,
+          title: 'Download Failed',
+          message: result.error || 'Could not download sample CSV template.',
+          type: 'destructive',
+          buttons: [{ text: 'OK' }],
+        });
+      }
+    } catch (e: any) {
+      setAlertConfig({
+        visible: true,
+        title: 'Error',
+        message: e?.message || 'Failed to download sample CSV template.',
+        type: 'destructive',
+        buttons: [{ text: 'OK' }],
+      });
+    } finally {
+      setIsExportingSample(false);
+    }
+  };
+
+  const handleExportJSONBackup = async () => {
+    setIsExportingJSON(true);
+    try {
+      const result = await exportAppData();
+      if (result.success && result.metadata) {
+        setAlertConfig({
+          visible: true,
+          title: 'Full Backup Exported',
+          message: `Your comprehensive data backup has been successfully created and shared.\n\n• ${result.metadata.transactionsCount} Transactions\n• ${result.metadata.accountsCount} Accounts\n• ${result.metadata.categoriesCount} Categories\n• ${result.metadata.budgetsCount} Budgets\n• ${result.metadata.loansCount} Loans`,
+          type: 'success',
+          buttons: [{ text: 'Done' }],
+        });
+      } else if (!result.success) {
+        setAlertConfig({
+          visible: true,
+          title: 'Export Failed',
+          message: result.error || 'Could not export app backup. Please try again.',
+          type: 'destructive',
+          buttons: [{ text: 'OK' }],
+        });
+      }
+    } catch (e: any) {
+      setAlertConfig({
+        visible: true,
+        title: 'Export Error',
+        message: e?.message || 'An unexpected error occurred during export.',
+        type: 'destructive',
+        buttons: [{ text: 'OK' }],
+      });
+    } finally {
+      setIsExportingJSON(false);
+    }
+  };
+
+  const handleExportDataPrompt = () => {
+    setAlertConfig({
+      visible: true,
+      title: 'Export Data',
+      message: 'Choose your desired export format:\n\n• CSV Spreadsheet: Export transaction records into a CSV file viewable in Excel or Google Sheets.\n• Full Backup (JSON): Complete snapshot containing all accounts, categories, transactions, budgets, and loans.',
+      type: 'info',
+      buttonLayout: 'column',
+      buttons: [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Export CSV (Recommended)',
+          style: 'default',
+          onPress: () => {
+            setTimeout(handleExportCSV, 150);
+          },
+        },
+        {
+          text: 'Full Backup (JSON)',
+          style: 'default',
+          onPress: () => {
+            setTimeout(handleExportJSONBackup, 150);
+          },
+        },
+      ],
+    });
+  };
+
+  const handleImportPrompt = () => {
+    setAlertConfig({
+      visible: true,
+      title: 'Import Data',
+      message: 'Restore transactions from a CSV spreadsheet or JSON backup.\n\nNeed to format your CSV first? Download our sample template to see the required column headers.',
+      type: 'info',
+      buttonLayout: 'column',
+      buttons: [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Select File to Import',
+          style: 'default',
+          onPress: () => {
+            setTimeout(handlePickAndProcessFile, 200);
+          },
+        },
+        {
+          text: 'Download Sample CSV Template',
+          style: 'default',
+          onPress: () => {
+            setTimeout(handleExportSampleCSV, 150);
+          },
+        },
+      ],
+    });
+  };
+
+  const handlePickAndProcessFile = async () => {
+    try {
+      const pickResult = await pickBackupFile();
+      if (pickResult.canceled) return;
+      if (pickResult.error || !pickResult.content) {
+        setAlertConfig({
+          visible: true,
+          title: 'Import Error',
+          message: pickResult.error || 'Could not read the selected file.',
+          type: 'destructive',
+          buttons: [{ text: 'OK' }],
+        });
+        return;
+      }
+
+      // Check if it's a CSV file or contains CSV formatted transactions
+      if (pickResult.isCSV) {
+        const parsed = parseTransactionsCSV(pickResult.content);
+        if (!parsed.valid || !parsed.rows || !parsed.summary) {
+          setAlertConfig({
+            visible: true,
+            title: 'Invalid CSV File',
+            message: parsed.error || 'The selected CSV file could not be parsed. Required columns: Date, Type, Category, Account, To Account, Amount, Note.',
+            type: 'destructive',
+            buttons: [{ text: 'OK' }],
+          });
+          return;
+        }
+
+        const summary = parsed.summary;
+        const totalFormatted = `${currencySymbol} ${summary.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+        setAlertConfig({
+          visible: true,
+          title: 'Import CSV Transactions',
+          message: `File: ${pickResult.fileName || 'transactions.csv'}\n\nParsed Summary:\n• ${summary.count} Valid Transactions\n• ${summary.expenseCount} Expenses\n• ${summary.incomeCount} Income Records\n• ${summary.transferCount} Transfers\n• Total Volume: ${totalFormatted}\n\nChoose an import mode:\n• Merge (Safe): Adds new records and ignores duplicates. Automatically creates missing categories or accounts.\n• Replace All: Wipes existing transactions and restores only the records in this CSV.`,
+          type: 'warning',
+          buttonLayout: 'column',
+          buttons: [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Merge (Safe)',
+              style: 'default',
+              onPress: async () => {
+                setIsImporting(true);
+                try {
+                  const res = await importTransactionsCSV(parsed.rows!, 'merge');
+                  if (res.success) {
+                    await loadAppData();
+                    setAlertConfig({
+                      visible: true,
+                      title: 'CSV Import Complete',
+                      message: `Successfully imported ${res.importedCount} transactions!\n\n• ${res.skippedDuplicates} duplicates safely skipped\n• ${res.createdAccounts} new accounts created\n• ${res.createdCategories} new categories created`,
+                      type: 'success',
+                      buttons: [{ text: 'Done' }],
+                    });
+                  } else {
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Import Failed',
+                      message: res.error || 'Could not import transactions from CSV.',
+                      type: 'destructive',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  }
+                } catch (err: any) {
+                  setAlertConfig({
+                    visible: true,
+                    title: 'Import Error',
+                    message: err?.message || 'Failed to import CSV transactions.',
+                    type: 'destructive',
+                    buttons: [{ text: 'OK' }],
+                  });
+                } finally {
+                  setIsImporting(false);
+                }
+              },
+            },
+            {
+              text: 'Replace All',
+              style: 'destructive',
+              onPress: async () => {
+                setIsImporting(true);
+                try {
+                  const res = await importTransactionsCSV(parsed.rows!, 'replace');
+                  if (res.success) {
+                    await loadAppData();
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Transactions Replaced',
+                      message: `Existing transactions were cleared and ${res.importedCount} records were imported successfully.\n\n• ${res.createdAccounts} new accounts created\n• ${res.createdCategories} new categories created`,
+                      type: 'success',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  } else {
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Replace Failed',
+                      message: res.error || 'Could not replace transactions.',
+                      type: 'destructive',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  }
+                } catch (err: any) {
+                  setAlertConfig({
+                    visible: true,
+                    title: 'Import Error',
+                    message: err?.message || 'Failed to replace transactions.',
+                    type: 'destructive',
+                    buttons: [{ text: 'OK' }],
+                  });
+                } finally {
+                  setIsImporting(false);
+                }
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      // If not CSV, test if it's a JSON backup
+      const validation = validateBackupContent(pickResult.content);
+      if (validation.valid && validation.payload) {
+        const payload = validation.payload;
+        const meta = payload.metadata;
+        const exportDateStr = new Date(payload.exported_at).toLocaleString();
+
+        setAlertConfig({
+          visible: true,
+          title: 'Restore Backup Data',
+          message: `File: ${pickResult.fileName || 'backup.json'}\nExported: ${exportDateStr}\n\nContents:\n• ${meta.transactionsCount} Transactions\n• ${meta.accountsCount} Accounts\n• ${meta.categoriesCount} Categories\n• ${meta.budgetsCount} Budgets\n• ${meta.loansCount} Loans\n\nChoose an import option:\n• Merge: Safely adds missing records & prevents duplicates without deleting existing data.\n• Replace All: Wipes existing database and restores completely from this file.`,
+          type: 'warning',
+          buttonLayout: 'column',
+          buttons: [
+            {
+              text: 'Cancel',
+              style: 'cancel',
+            },
+            {
+              text: 'Merge (Safe)',
+              style: 'default',
+              onPress: async () => {
+                setIsImporting(true);
+                try {
+                  const res = await restoreAppData(payload, 'merge');
+                  if (res.success) {
+                    await loadAppData();
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Import Successful',
+                      message: `Backup data merged successfully!\n\n• ${res.importedCounts.transactions} Transactions\n• ${res.importedCounts.accounts} Accounts\n• ${res.importedCounts.categories} Categories\n• ${res.importedCounts.budgets} Budgets\n• ${res.importedCounts.loans} Loans${res.skippedDuplicates > 0 ? `\n\n(${res.skippedDuplicates} duplicate records safely skipped)` : ''}`,
+                      type: 'success',
+                      buttons: [{ text: 'Awesome' }],
+                    });
+                  } else {
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Import Failed',
+                      message: res.error || 'Could not restore backup.',
+                      type: 'destructive',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  }
+                } catch (err: any) {
+                  setAlertConfig({
+                    visible: true,
+                    title: 'Import Error',
+                    message: err?.message || 'Failed to restore data.',
+                    type: 'destructive',
+                    buttons: [{ text: 'OK' }],
+                  });
+                } finally {
+                  setIsImporting(false);
+                }
+              },
+            },
+            {
+              text: 'Replace All',
+              style: 'destructive',
+              onPress: async () => {
+                setIsImporting(true);
+                try {
+                  const res = await restoreAppData(payload, 'replace');
+                  if (res.success) {
+                    await loadAppData();
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Restore Complete',
+                      message: `All data was replaced with backup contents successfully.\n\n• ${res.importedCounts.transactions} Transactions\n• ${res.importedCounts.accounts} Accounts\n• ${res.importedCounts.categories} Categories\n• ${res.importedCounts.budgets} Budgets\n• ${res.importedCounts.loans} Loans`,
+                      type: 'success',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  } else {
+                    setAlertConfig({
+                      visible: true,
+                      title: 'Restore Failed',
+                      message: res.error || 'Could not restore backup.',
+                      type: 'destructive',
+                      buttons: [{ text: 'OK' }],
+                    });
+                  }
+                } catch (err: any) {
+                  setAlertConfig({
+                    visible: true,
+                    title: 'Restore Error',
+                    message: err?.message || 'Failed to replace data.',
+                    type: 'destructive',
+                    buttons: [{ text: 'OK' }],
+                  });
+                } finally {
+                  setIsImporting(false);
+                }
+              },
+            },
+          ],
+        });
+        return;
+      }
+
+      // Neither CSV nor valid JSON backup
+      setAlertConfig({
+        visible: true,
+        title: 'Unrecognized File Format',
+        message: 'The selected file is neither a valid ApniRakam CSV transactions spreadsheet nor a JSON backup file. Please select a valid .csv or .json file.',
+        type: 'destructive',
+        buttons: [{ text: 'OK' }],
+      });
+    } catch (e: any) {
+      setAlertConfig({
+        visible: true,
+        title: 'Import Failed',
+        message: e?.message || 'Failed to pick and import file.',
+        type: 'destructive',
+        buttons: [{ text: 'OK' }],
+      });
+    }
   };
 
   const handleRestoreDefaultCategories = () => {
@@ -367,6 +786,32 @@ export default function SettingsScreen() {
             )}
           </View>
 
+          {/* ── Backup & Restore ── */}
+          <SectionHeader
+            title="Backup & Restore"
+            subtitle="Export data or restore from backup"
+            colors={colors}
+          />
+          <View style={[styles.card, { backgroundColor: surface, borderColor: border, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.25 : 0.05 }]}>
+            <SettingRow
+              icon="cloud-upload-outline"
+              iconColor="#10B981"
+              label="Export Data"
+              value={isExportingCSV || isExportingJSON ? 'Exporting...' : 'CSV / JSON'}
+              colors={colors}
+              onPress={isExportingCSV || isExportingJSON ? undefined : handleExportDataPrompt}
+            />
+            <SettingRow
+              icon="cloud-download-outline"
+              iconColor="#3B82F6"
+              label="Import Data"
+              value={isImporting || isExportingSample ? 'Working...' : 'Restore'}
+              colors={colors}
+              onPress={isImporting || isExportingSample ? undefined : handleImportPrompt}
+              last
+            />
+          </View>
+
           {/* ── Categories ── */}
           <SectionHeader title="Categories" colors={colors} />
           <View style={[styles.card, { backgroundColor: surface, borderColor: border, shadowColor: colors.cardShadow, shadowOpacity: isDark ? 0.25 : 0.05 }]}>
@@ -399,6 +844,7 @@ export default function SettingsScreen() {
         message={alertConfig.message}
         type={alertConfig.type}
         buttons={alertConfig.buttons}
+        buttonLayout={alertConfig.buttonLayout}
         onClose={() => setAlertConfig((c) => ({ ...c, visible: false }))}
       />
     </View>
